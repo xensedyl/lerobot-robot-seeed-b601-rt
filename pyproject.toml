@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61", "setuptools-scm[toml]>=8", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lerobot_robot_seeed_b601_rt"
+dynamic = ["version"]
+description = "Seeed reBot Arm B601 RT follower integration with LeRobot"
+readme = "README.md"
+authors = [
+  { name = "Seeed Studio", email = "jack.shao@seeed.cc" },
+]
+license = "MIT"
+requires-python = ">=3.10"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "lerobot>=0.4",
+  "rebotarm-control-rt",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lerobot_robot_seeed_b601_rt*"]
+exclude = ["*.egg-info"]
+
+[tool.setuptools_scm]
+tag_regex = "^v(?P<version>\\d+\\.\\d+\\.\\d+)$"
+fallback_version = "0.0.0"
