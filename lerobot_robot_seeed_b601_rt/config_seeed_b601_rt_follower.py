@@ -41,8 +41,13 @@ class SeeedB601RTFollowerConfig(RobotConfig):
         }
     )
 
+    # LeRobot-facing action mode. "joint" exposes joint targets; "cartesian"
+    # exposes TCP targets and converts them to joint targets internally by IK.
+    action_mode: str = "joint"
     control_gripper: bool = True
     control_mode: str = "pos_vel"
+    gripper_force_pos_enabled: bool = True
+    gripper_force_pos_torque_ratio: float = 0.02 # Ratio of gripper force to position torque[0.018 - 1.0]%.
     rt_rate: float = 150.0
     rt_command_gap_us: int = 0
     rt_priority: int = 99
@@ -50,6 +55,11 @@ class SeeedB601RTFollowerConfig(RobotConfig):
     damiao_tx_debug: int = 0
     debug_motion: bool = False
     debug_motion_interval_s: float = 1.0
+    # Extra fixed transform from the URDF end_link to a custom tool/TCP.
+    # The bundled B601 URDF already places end_link at the gripper end frame.
+    # Units: meters and degrees, expressed in end_link frame.
+    tool_tcp_offset_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    tool_tcp_offset_rpy_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     # Maps LeRobot joint names to (command id, feedback id).
     motor_can_ids: dict[str, tuple[int, int]] = field(
@@ -80,6 +90,22 @@ class SeeedB601RTFollowerConfig(RobotConfig):
     # Position velocity limits in degrees/s. These are converted to rad/s for rebotarm_control_rt.
     pos_vel_velocity: float | list[float] = field(
         default_factory=lambda: [150, 150, 150, 150, 150, 150, 300]
+    )
+
+    # Per-joint velocity limit (deg/s) used when returning to the initial pose
+    # (reset / disconnect). Accepts a scalar (all joints), a list (per motor in
+    # the motor_can_ids order), or a dict keyed by joint name. Each value is
+    # clamped to <= the corresponding pos_vel_velocity at runtime.
+    return_to_initial_vlim_deg_s: float | list[float] | dict[str, float] = field(
+        default_factory=lambda: {
+            "shoulder_pan": 15.0,
+            "shoulder_lift": 15.0,
+            "elbow_flex": 15.0,
+            "wrist_flex": 15.0,
+            "wrist_yaw": 15.0,
+            "wrist_roll": 15.0,
+            "gripper": 150.0,
+        }
     )
 
     # Soft limits in degrees, matching the non-RT B601 plugin.

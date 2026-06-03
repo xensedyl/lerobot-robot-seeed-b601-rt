@@ -19,8 +19,25 @@ from .config_seeed_b601_rt_follower import SeeedB601RTFollowerConfig
 
 logger = logging.getLogger(__name__)
 
-RETURN_TO_INITIAL_TIMEOUT_S = 3.0
-RETURN_TO_INITIAL_TOLERANCE_DEG = 0.5
+KINEMATIC_MOTORS = [
+    "shoulder_pan",
+    "shoulder_lift",
+    "elbow_flex",
+    "wrist_flex",
+    "wrist_yaw",
+    "wrist_roll",
+]
+TCP_POSE_KEYS = (
+    "tcp.x",
+    "tcp.y",
+    "tcp.z",
+    "tcp.r1",
+    "tcp.r2",
+    "tcp.r3",
+    "tcp.r4",
+    "tcp.r5",
+    "tcp.r6",
+)
 
 
 class SeeedB601RTFollower(Robot):
@@ -42,6 +59,8 @@ class SeeedB601RTFollower(Robot):
         self._last_goal_deg: dict[str, float] = {}
         self._last_positions_deg: dict[str, float] = {}
         self._last_debug_motion_s = 0.0
+        self._kinematic_model = None
+        self._kinematic_frame_id: int | None = None
         self._validate_config()
 
     def _validate_config(self) -> None:
@@ -57,6 +76,9 @@ class SeeedB601RTFollower(Robot):
         mode = self.config.control_mode.lower()
         if mode not in {"pos_vel", "mit"}:
             raise ValueError("control_mode must be 'pos_vel' or 'mit'.")
+        action_mode = self.config.action_mode.lower()
+        if action_mode not in {"joint", "cartesian"}:
+            raise ValueError("action_mode must be 'joint' or 'cartesian'.")
         if self.config.can_adapter not in {"damiao", "socketcan", "robstride"}:
             raise ValueError("can_adapter must be 'damiao', 'socketcan', or 'robstride'.")
         if isinstance(self.config.pos_vel_velocity, list) and len(self.config.pos_vel_velocity) != len(
@@ -69,10 +91,23 @@ class SeeedB601RTFollower(Robot):
             raise ValueError("damiao_tx_debug must be >= 0.")
         if self.config.debug_motion_interval_s <= 0:
             raise ValueError("debug_motion_interval_s must be > 0.")
+        if not 0.0 <= self.config.gripper_force_pos_torque_ratio <= 1.0:
+            raise ValueError("gripper_force_pos_torque_ratio must be in [0, 1].")
+        if len(self.config.tool_tcp_offset_xyz) != 3:
+            raise ValueError("tool_tcp_offset_xyz must have 3 values.")
+        if len(self.config.tool_tcp_offset_rpy_deg) != 3:
+            raise ValueError("tool_tcp_offset_rpy_deg must have 3 values.")
 
     @property
     def _action_motors_ft(self) -> dict[str, type]:
         return {f"{motor}.pos": float for motor in self.motor_names}
+
+    @property
+    def _action_tcp_ft(self) -> dict[str, type]:
+        features = dict.fromkeys(TCP_POSE_KEYS, float)
+        if "gripper" in self.motor_names:
+            features["gripper.pos"] = float
+        return features
 
     @property
     def _observation_motors_ft(self) -> dict[str, type]:
@@ -84,6 +119,12 @@ class SeeedB601RTFollower(Robot):
         return features
 
     @property
+    def _observation_tcp_ft(self) -> dict[str, type]:
+        if self.config.action_mode.lower() != "cartesian":
+            return {}
+        return dict.fromkeys(TCP_POSE_KEYS, float)
+
+    @property
     def _cameras_ft(self) -> dict[str, tuple]:
         return {
             cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
@@ -92,10 +133,12 @@ class SeeedB601RTFollower(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._observation_motors_ft, **self._cameras_ft}
+        return {**self._observation_motors_ft, **self._observation_tcp_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        if self.config.action_mode.lower() == "cartesian":
+            return self._action_tcp_ft
         return self._action_motors_ft
 
     @property
@@ -125,6 +168,176 @@ class SeeedB601RTFollower(Robot):
         else:
             values = [velocity] * len(self.motor_names)
         return [math.radians(float(v)) for v in values]
+
+    @staticmethod
+    def _rpy_deg_to_matrix(rpy_deg: tuple[float, float, float]) -> np.ndarray:
+        roll, pitch, yaw = [math.radians(float(v)) for v in rpy_deg]
+        cr, sr = math.cos(roll), math.sin(roll)
+        cp, sp = math.cos(pitch), math.sin(pitch)
+        cy, sy = math.cos(yaw), math.sin(yaw)
+
+        rot_x = np.array([[1.0, 0.0, 0.0], [0.0, cr, -sr], [0.0, sr, cr]], dtype=float)
+        rot_y = np.array([[cp, 0.0, sp], [0.0, 1.0, 0.0], [-sp, 0.0, cp]], dtype=float)
+        rot_z = np.array([[cy, -sy, 0.0], [sy, cy, 0.0], [0.0, 0.0, 1.0]], dtype=float)
+        return rot_z @ rot_y @ rot_x
+
+    def _tool_tcp_transform(self) -> np.ndarray:
+        transform = np.eye(4, dtype=float)
+        transform[:3, :3] = self._rpy_deg_to_matrix(self.config.tool_tcp_offset_rpy_deg)
+        transform[:3, 3] = np.asarray(self.config.tool_tcp_offset_xyz, dtype=float)
+        return transform
+
+    @staticmethod
+    def _rotation_6d_to_matrix(action: RobotAction) -> np.ndarray:
+        a1 = np.array([action["tcp.r1"], action["tcp.r2"], action["tcp.r3"]], dtype=float)
+        a2 = np.array([action["tcp.r4"], action["tcp.r5"], action["tcp.r6"]], dtype=float)
+        b1_norm = np.linalg.norm(a1)
+        if b1_norm < 1e-9:
+            raise ValueError("Invalid tcp.r1-r3 rotation vector from Pico4 action.")
+        b1 = a1 / b1_norm
+
+        a2_orth = a2 - np.dot(b1, a2) * b1
+        b2_norm = np.linalg.norm(a2_orth)
+        if b2_norm < 1e-9:
+            raise ValueError("Invalid tcp.r4-r6 rotation vector from Pico4 action.")
+        b2 = a2_orth / b2_norm
+        b3 = np.cross(b1, b2)
+        return np.column_stack([b1, b2, b3])
+
+    @staticmethod
+    def _matrix_to_rotation_6d(rot: np.ndarray) -> np.ndarray:
+        return np.array(
+            [
+                rot[0, 0],
+                rot[1, 0],
+                rot[2, 0],
+                rot[0, 1],
+                rot[1, 1],
+                rot[2, 1],
+            ],
+            dtype=np.float32,
+        )
+
+    @staticmethod
+    def _matrix_to_quaternion_wxyz(rot: np.ndarray) -> np.ndarray:
+        trace = float(np.trace(rot))
+        if trace > 0:
+            s = 0.5 / math.sqrt(trace + 1.0)
+            qw = 0.25 / s
+            qx = (rot[2, 1] - rot[1, 2]) * s
+            qy = (rot[0, 2] - rot[2, 0]) * s
+            qz = (rot[1, 0] - rot[0, 1]) * s
+        elif rot[0, 0] > rot[1, 1] and rot[0, 0] > rot[2, 2]:
+            s = 2.0 * math.sqrt(max(1.0 + rot[0, 0] - rot[1, 1] - rot[2, 2], 0.0))
+            qw = (rot[2, 1] - rot[1, 2]) / s
+            qx = 0.25 * s
+            qy = (rot[0, 1] + rot[1, 0]) / s
+            qz = (rot[0, 2] + rot[2, 0]) / s
+        elif rot[1, 1] > rot[2, 2]:
+            s = 2.0 * math.sqrt(max(1.0 + rot[1, 1] - rot[0, 0] - rot[2, 2], 0.0))
+            qw = (rot[0, 2] - rot[2, 0]) / s
+            qx = (rot[0, 1] + rot[1, 0]) / s
+            qy = 0.25 * s
+            qz = (rot[1, 2] + rot[2, 1]) / s
+        else:
+            s = 2.0 * math.sqrt(max(1.0 + rot[2, 2] - rot[0, 0] - rot[1, 1], 0.0))
+            qw = (rot[1, 0] - rot[0, 1]) / s
+            qx = (rot[0, 2] + rot[2, 0]) / s
+            qy = (rot[1, 2] + rot[2, 1]) / s
+            qz = 0.25 * s
+
+        quat = np.array([qw, qx, qy, qz], dtype=np.float32)
+        norm = np.linalg.norm(quat)
+        if norm < 1e-9:
+            return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        return quat / norm
+
+    def _kinematic_joint_rad(self, positions_deg: dict[str, float]) -> np.ndarray:
+        return np.array([math.radians(float(positions_deg[name])) for name in KINEMATIC_MOTORS], dtype=float)
+
+    def _load_kinematic_model(self):
+        if self._kinematic_model is None:
+            from rebotarm_control_rt.kinematics import load_robot_model
+
+            self._kinematic_model = load_robot_model()
+            self._kinematic_frame_id = self._kinematic_model.end_effector_frame_id()
+        return self._kinematic_model
+
+    def _tcp_pose_matrix_from_positions(self, positions_deg: dict[str, float]) -> np.ndarray:
+        model = self._load_kinematic_model()
+        _, _, end_pose = model.fk(self._kinematic_joint_rad(positions_deg), "")
+        return np.asarray(end_pose, dtype=float) @ self._tool_tcp_transform()
+
+    def get_current_tcp_pose_quat(self) -> np.ndarray:
+        """Return current TCP pose as [x, y, z, qw, qx, qy, qz, gripper_norm]."""
+        if self.arm is None or not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if not self._last_positions_deg:
+            positions_deg, _, _ = self._read_state_deg(request=False)
+        else:
+            positions_deg = dict(self._last_positions_deg)
+
+        tcp_pose = self._tcp_pose_matrix_from_positions(positions_deg)
+        quat = self._matrix_to_quaternion_wxyz(tcp_pose[:3, :3])
+
+        gripper_norm = 1.0
+        if "gripper" in positions_deg and "gripper" in self.config.joint_limits:
+            open_deg, closed_deg = self.config.joint_limits["gripper"]
+            span = closed_deg - open_deg
+            if abs(span) > 1e-9:
+                gripper_norm = (positions_deg["gripper"] - open_deg) / span
+                gripper_norm = max(0.0, min(1.0, gripper_norm))
+
+        return np.array(
+            [
+                float(tcp_pose[0, 3]),
+                float(tcp_pose[1, 3]),
+                float(tcp_pose[2, 3]),
+                float(quat[0]),
+                float(quat[1]),
+                float(quat[2]),
+                float(quat[3]),
+                float(gripper_norm),
+            ],
+            dtype=np.float32,
+        )
+
+    def tcp_action_to_joint_action(self, action: RobotAction) -> RobotAction:
+        """Convert a Pico4 Cartesian TCP action to B601 joint-space action."""
+        required = set(TCP_POSE_KEYS)
+        missing = required - set(action)
+        if missing:
+            raise ValueError(f"Pico4 TCP action missing keys: {sorted(missing)}")
+
+        if not self._last_positions_deg:
+            self._read_state_deg(request=False)
+
+        model = self._load_kinematic_model()
+        target_tcp = np.eye(4, dtype=float)
+        target_tcp[:3, :3] = self._rotation_6d_to_matrix(action)
+        target_tcp[:3, 3] = [float(action["tcp.x"]), float(action["tcp.y"]), float(action["tcp.z"])]
+        target_end = target_tcp @ np.linalg.inv(self._tool_tcp_transform())
+
+        q_seed = self._kinematic_joint_rad(self._last_positions_deg)
+        result = model.solve_ik(target_end, q_seed, self._kinematic_frame_id)
+        if not result.success:
+            logger.warning(
+                "Pico4 IK did not fully converge: error=%.5f iterations=%s; using best solution.",
+                float(result.error),
+                getattr(result, "iterations", None),
+            )
+
+        joint_action: RobotAction = {}
+        for idx, motor_name in enumerate(KINEMATIC_MOTORS):
+            joint_action[f"{motor_name}.pos"] = math.degrees(float(result.q[idx]))
+
+        if "gripper" in self.motor_names and "gripper.pos" in action:
+            gripper_norm = max(0.0, min(1.0, float(action["gripper.pos"])))
+            open_deg, closed_deg = self.config.joint_limits["gripper"]
+            joint_action["gripper.pos"] = open_deg + gripper_norm * (closed_deg - open_deg)
+
+        return joint_action
 
     def _rt_cfg_path(self) -> Path:
         if self.config.arm_cfg_path is not None:
@@ -204,12 +417,14 @@ class SeeedB601RTFollower(Robot):
         mode = self.config.control_mode.lower()
         if mode == "pos_vel":
             self.arm.mode_pos_vel(vlim=self._velocity_limits_rad())
+            self._configure_gripper_force_pos_mode()
         else:
             self.arm.mode_mit()
 
         self._initial_positions_deg, _, _ = self._read_state_deg(request=True)
         self._apply_initial_gripper_pose(self._initial_positions_deg)
         self._last_goal_deg = dict(self._initial_positions_deg)
+        self._set_rt_target_deg(self._initial_positions_deg)
         self.arm.start_rt_loop(
             rate=float(self.config.rt_rate),
             rt_priority=int(self.config.rt_priority),
@@ -221,6 +436,24 @@ class SeeedB601RTFollower(Robot):
             "Started RT target loop at %.1f Hz (command gap %s us).",
             float(self.config.rt_rate),
             int(self.config.rt_command_gap_us),
+        )
+
+    def _configure_gripper_force_pos_mode(self) -> None:
+        if (
+            self.config.control_mode.lower() != "pos_vel"
+            or not self.config.gripper_force_pos_enabled
+            or "gripper" not in self.motor_names
+        ):
+            return
+
+        try:
+            self.arm.ensure_mode("gripper", 4, timeout_ms=1000)
+        except Exception:
+            logger.exception("Failed to switch gripper to FORCE_POS mode.")
+            raise
+        logger.info(
+            "gripper ensure mode FORCE_POS with torque ratio %.3f.",
+            float(self.config.gripper_force_pos_torque_ratio),
         )
 
     def _read_state_deg(self, request: bool) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
@@ -258,6 +491,15 @@ class SeeedB601RTFollower(Robot):
             obs_dict[f"{motor_name}.vel"] = vel_deg[motor_name]
             obs_dict[f"{motor_name}.torque"] = torque[motor_name]
 
+        if self.config.action_mode.lower() == "cartesian":
+            tcp_pose = self._tcp_pose_matrix_from_positions(pos_deg)
+            r6d = self._matrix_to_rotation_6d(tcp_pose[:3, :3])
+            obs_dict["tcp.x"] = float(tcp_pose[0, 3])
+            obs_dict["tcp.y"] = float(tcp_pose[1, 3])
+            obs_dict["tcp.z"] = float(tcp_pose[2, 3])
+            for idx, key in enumerate(TCP_POSE_KEYS[3:]):
+                obs_dict[key] = float(r6d[idx])
+
         for cam_key, cam in self.cameras.items():
             obs_dict[cam_key] = cam.async_read()
 
@@ -272,8 +514,58 @@ class SeeedB601RTFollower(Robot):
     def _apply_initial_gripper_pose(self, positions_deg: dict[str, float]) -> None:
         if "gripper" not in positions_deg:
             return
-        # B601 convention: gripper zero is the closed initial pose.
+        if self.config.action_mode.lower() == "cartesian":
+            # Pico4/cartesian teleoperation starts with the trigger released, which means open.
+            positions_deg["gripper"] = self._clip(
+                self.config.joint_limits["gripper"][0],
+                self.config.joint_limits["gripper"],
+            )
+            return
+
+        # B601 joint-control convention: gripper zero is the closed initial pose.
         positions_deg["gripper"] = self._clip(0.0, self.config.joint_limits["gripper"])
+
+    def _force_pos_flags(self) -> tuple[list[bool] | None, list[float] | None]:
+        if (
+            self.config.control_mode.lower() != "pos_vel"
+            or not self.config.gripper_force_pos_enabled
+            or "gripper" not in self.motor_names
+        ):
+            return None, None
+
+        force_pos = [motor_name == "gripper" for motor_name in self.motor_names]
+        torque_ratio = [
+            float(self.config.gripper_force_pos_torque_ratio) if motor_name == "gripper" else 0.0
+            for motor_name in self.motor_names
+        ]
+        return force_pos, torque_ratio
+
+    def _set_rt_target_deg(self, goal_pos: dict[str, float], vlim_rad: list[float] | None = None) -> None:
+        target_rad = [math.radians(goal_pos[motor_name]) for motor_name in self.motor_names]
+        force_pos, force_pos_torque_ratio = self._force_pos_flags()
+        self.arm.set_targets(
+            pos=target_rad,
+            vlim=vlim_rad if vlim_rad is not None else self._velocity_limits_rad(),
+            force_pos=force_pos,
+            force_pos_torque_ratio=force_pos_torque_ratio,
+        )
+
+    def _return_to_initial_vlim_rad(self) -> list[float]:
+        """复位时每关节的速度限制（rad/s），直接取 config.return_to_initial_vlim_deg_s。
+
+        支持标量（所有关节）/列表（按电机顺序）/按关节名 dict。
+        """
+        spec = self.config.return_to_initial_vlim_deg_s
+        out: list[float] = []
+        for idx, motor_name in enumerate(self.motor_names):
+            if isinstance(spec, dict):
+                deg = spec[motor_name]
+            elif isinstance(spec, (list, tuple)):
+                deg = spec[idx]
+            else:
+                deg = spec
+            out.append(math.radians(float(deg)))
+        return out
 
     def _complete_goal(self, action: RobotAction) -> dict[str, float]:
         goal_pos = dict(self._last_goal_deg)
@@ -294,7 +586,22 @@ class SeeedB601RTFollower(Robot):
             goal_pos.setdefault(motor_name, self._last_positions_deg.get(motor_name, 0.0))
         return {motor_name: goal_pos[motor_name] for motor_name in self.motor_names}
 
-    def send_action(self, action: RobotAction) -> RobotAction:
+    def _complete_tcp_action(self, action: RobotAction) -> RobotAction:
+        missing = set(TCP_POSE_KEYS) - set(action)
+        if missing:
+            raise ValueError(f"Cartesian action missing keys: {sorted(missing)}")
+
+        tcp_action: RobotAction = {key: float(action[key]) for key in TCP_POSE_KEYS}
+        if "gripper" in self.motor_names:
+            if "gripper.pos" in action:
+                gripper_norm = float(action["gripper.pos"])
+            else:
+                current = self.get_current_tcp_pose_quat()
+                gripper_norm = float(current[7])
+            tcp_action["gripper.pos"] = max(0.0, min(1.0, gripper_norm))
+        return tcp_action
+
+    def _send_joint_action(self, action: RobotAction) -> RobotAction:
         if self.arm is None or not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -311,12 +618,24 @@ class SeeedB601RTFollower(Robot):
             }
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
-        target_rad = [math.radians(goal_pos[motor_name]) for motor_name in self.motor_names]
-        self.arm.set_targets(pos=target_rad, vlim=self._velocity_limits_rad())
-
+        self._set_rt_target_deg(goal_pos)
         self._last_goal_deg = dict(goal_pos)
         self._maybe_log_motion_debug(goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
+
+    def send_action(self, action: RobotAction) -> RobotAction:
+        if self.arm is None or not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        action_mode = self.config.action_mode.lower()
+        is_tcp_action = any(key in action for key in TCP_POSE_KEYS)
+        if action_mode == "cartesian" or is_tcp_action:
+            tcp_action = self._complete_tcp_action(action)
+            joint_action = self.tcp_action_to_joint_action(tcp_action)
+            self._send_joint_action(joint_action)
+            return tcp_action
+
+        return self._send_joint_action(action)
 
     def _maybe_log_motion_debug(self, goal_pos: dict[str, float]) -> None:
         if not self.config.debug_motion:
@@ -352,16 +671,32 @@ class SeeedB601RTFollower(Robot):
         if self.arm is None or not self._initial_positions_deg:
             return
 
-        target_rad = [math.radians(self._initial_positions_deg[name]) for name in self.motor_names]
         try:
-            self.arm.set_targets(pos=target_rad, vlim=self._velocity_limits_rad())
-            self._last_goal_deg = dict(self._initial_positions_deg)
+            current, _, _ = self._read_state_deg(request=False)
+        except Exception:
+            logger.debug("Failed to read state before returning to initial position.", exc_info=True)
+            return
+
+        target = {
+            name: self._clip(self._initial_positions_deg[name], self.config.joint_limits[name])
+            for name in self.motor_names
+        }
+        return_started_s = time.monotonic()
+        return_vlim_rad = self._return_to_initial_vlim_rad()
+
+        try:
+            self._set_rt_target_deg(target, vlim_rad=return_vlim_rad)
+            self._last_goal_deg = dict(target)
         except Exception:
             logger.debug("Failed to command initial position before disconnect.", exc_info=True)
             return
 
-        deadline = time.monotonic() + RETURN_TO_INITIAL_TIMEOUT_S
-        tolerance = RETURN_TO_INITIAL_TOLERANCE_DEG
+        expected_s = max(
+            abs(target[name] - current.get(name, target[name])) / math.degrees(return_vlim_rad[idx])
+            for idx, name in enumerate(self.motor_names)
+        )
+        deadline = return_started_s + expected_s + 0.5
+        tolerance = 0.5
         while time.monotonic() < deadline:
             try:
                 current, _, _ = self._read_state_deg(request=False)
@@ -377,6 +712,9 @@ class SeeedB601RTFollower(Robot):
             time.sleep(0.02)
 
         logger.info("Return-to-initial timeout before disconnect.")
+
+    def reset_to_initial_position(self) -> None:
+        self._return_to_initial_position()
 
     def disconnect(self) -> None:
         if self.arm is None:
