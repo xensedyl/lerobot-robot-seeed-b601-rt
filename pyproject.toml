@@ -8,9 +8,10 @@ dynamic = ["version"]
 description = "Seeed reBot Arm B601 RT follower integration with LeRobot"
 readme = "README.md"
 authors = [
-  { name = "Seeed Studio", email = "jack.shao@seeed.cc" },
+  { name = "dongyaolin" },
 ]
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 classifiers = [
   "Programming Language :: Python :: 3",
