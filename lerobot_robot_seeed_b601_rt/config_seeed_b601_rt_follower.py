@@ -11,12 +11,14 @@ from lerobot.robots.robot import RobotConfig
 class ActionMode(str, Enum):
     """Control mode for reBot Arm B601.
 
+    Note: vel and torque are not observed.
     JOINT:
-        Action: joint positions (7D) + gripper (1D) = 8D
-        Observation: joint positions (7D) + velocities (7D) + efforts (7D) + gripper (1D) = 22D
+        Action: joint positions (6D) + gripper (1D) = 7D
+        Observation: joint positions (6D) + gripper (1D) = 7D
+
     CARTESIAN:
-        Action: TCP pose (7D) + gripper (1D) = 8D
-        Observation: TCP pose (7D) + gripper (1D) = 8D
+        Action: TCP position (3D) + rotation (6D) + gripper (1D) = 10D
+        Observation: TCP position (3D) + rotation (6D) + gripper (1D) = 10D
     """
 
     JOINT = "joint"
