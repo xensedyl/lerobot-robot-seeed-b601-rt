@@ -1,4 +1,7 @@
+import math
 from pathlib import Path
+
+import pytest
 
 from lerobot_robot_seeed_b601_rt import SeeedB601RTFollowerConfig
 from lerobot_robot_seeed_b601_rt.seeed_b601_rt_follower import SeeedB601RTFollower
@@ -37,3 +40,53 @@ def test_initial_gripper_pose_is_closed():
 
     assert positions["shoulder_pan"] == 12.0
     assert positions["gripper"] == 0.0
+
+
+def test_return_to_initial_vlim_supports_dict_scalar_and_list():
+    dict_robot = SeeedB601RTFollower(SeeedB601RTFollowerConfig(port="/dev/ttyACM0"))
+    assert dict_robot._return_to_initial_vlim_rad()[0] == pytest.approx(math.radians(15.0))
+    assert dict_robot._return_to_initial_vlim_rad()[-1] == pytest.approx(math.radians(150.0))
+
+    scalar_robot = SeeedB601RTFollower(
+        SeeedB601RTFollowerConfig(port="/dev/ttyACM0", return_to_initial_vlim_deg_s=20.0)
+    )
+    assert all(v == pytest.approx(math.radians(20.0)) for v in scalar_robot._return_to_initial_vlim_rad())
+
+    list_robot = SeeedB601RTFollower(
+        SeeedB601RTFollowerConfig(
+            port="/dev/ttyACM0",
+            return_to_initial_vlim_deg_s=[10, 20, 30, 40, 50, 60, 70],
+        )
+    )
+    assert list_robot._return_to_initial_vlim_rad()[2] == pytest.approx(math.radians(30.0))
+
+
+def test_return_to_initial_vlim_clamps_to_pos_vel_velocity():
+    cfg = SeeedB601RTFollowerConfig(
+        port="/dev/ttyACM0",
+        pos_vel_velocity=[5, 5, 5, 5, 5, 5, 5],
+        return_to_initial_vlim_deg_s=20.0,
+    )
+    robot = SeeedB601RTFollower(cfg)
+
+    assert all(v == pytest.approx(math.radians(5.0)) for v in robot._return_to_initial_vlim_rad())
+
+
+def test_return_to_initial_vlim_rejects_invalid_values():
+    with pytest.raises(ValueError, match="missing key"):
+        SeeedB601RTFollower(
+            SeeedB601RTFollowerConfig(
+                port="/dev/ttyACM0",
+                return_to_initial_vlim_deg_s={"shoulder_pan": 15.0},
+            )
+        )
+
+    with pytest.raises(ValueError, match="values must be > 0"):
+        SeeedB601RTFollower(
+            SeeedB601RTFollowerConfig(port="/dev/ttyACM0", return_to_initial_vlim_deg_s=0.0)
+        )
+
+    with pytest.raises(ValueError, match="list length"):
+        SeeedB601RTFollower(
+            SeeedB601RTFollowerConfig(port="/dev/ttyACM0", return_to_initial_vlim_deg_s=[15.0])
+        )

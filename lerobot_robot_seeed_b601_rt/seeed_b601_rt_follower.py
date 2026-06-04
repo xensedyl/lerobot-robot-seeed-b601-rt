@@ -85,6 +85,7 @@ class SeeedB601RTFollower(Robot):
             self.motor_names
         ):
             raise ValueError("pos_vel_velocity list length must match the controlled joint count.")
+        self._return_to_initial_vlim_rad()
         if self.config.rt_command_gap_us < 0:
             raise ValueError("rt_command_gap_us must be >= 0.")
         if self.config.damiao_tx_debug < 0:
@@ -551,21 +552,28 @@ class SeeedB601RTFollower(Robot):
         )
 
     def _return_to_initial_vlim_rad(self) -> list[float]:
-        """复位时每关节的速度限制（rad/s），直接取 config.return_to_initial_vlim_deg_s。
-
-        支持标量（所有关节）/列表（按电机顺序）/按关节名 dict。
-        """
+        """Return per-joint reset velocity limits in rad/s."""
         spec = self.config.return_to_initial_vlim_deg_s
-        out: list[float] = []
+        normal_vlim = self._velocity_limits_rad()
+        if isinstance(spec, (list, tuple)) and len(spec) != len(self.motor_names):
+            raise ValueError("return_to_initial_vlim_deg_s list length must match the controlled joint count.")
+
+        values: list[float] = []
         for idx, motor_name in enumerate(self.motor_names):
             if isinstance(spec, dict):
-                deg = spec[motor_name]
+                if motor_name not in spec:
+                    raise ValueError(f"return_to_initial_vlim_deg_s missing key: {motor_name}")
+                deg_s = spec[motor_name]
             elif isinstance(spec, (list, tuple)):
-                deg = spec[idx]
+                deg_s = spec[idx]
             else:
-                deg = spec
-            out.append(math.radians(float(deg)))
-        return out
+                deg_s = spec
+
+            deg_s = float(deg_s)
+            if deg_s <= 0:
+                raise ValueError("return_to_initial_vlim_deg_s values must be > 0.")
+            values.append(min(math.radians(deg_s), normal_vlim[idx]))
+        return values
 
     def _complete_goal(self, action: RobotAction) -> dict[str, float]:
         goal_pos = dict(self._last_goal_deg)
@@ -695,8 +703,8 @@ class SeeedB601RTFollower(Robot):
             abs(target[name] - current.get(name, target[name])) / math.degrees(return_vlim_rad[idx])
             for idx, name in enumerate(self.motor_names)
         )
-        deadline = return_started_s + expected_s + 0.5
-        tolerance = 0.5
+        deadline = return_started_s + expected_s + 0.02
+        tolerance = 0.1
         while time.monotonic() < deadline:
             try:
                 current, _, _ = self._read_state_deg(request=False)
