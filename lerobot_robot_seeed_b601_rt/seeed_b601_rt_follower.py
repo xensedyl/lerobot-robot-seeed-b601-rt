@@ -81,10 +81,13 @@ class SeeedB601RTFollower(Robot):
             raise ValueError("action_mode must be 'joint' or 'cartesian'.")
         if self.config.can_adapter not in {"damiao", "socketcan", "robstride"}:
             raise ValueError("can_adapter must be 'damiao', 'socketcan', or 'robstride'.")
-        if isinstance(self.config.pos_vel_velocity, list) and len(self.config.pos_vel_velocity) != len(
-            self.motor_names
-        ):
-            raise ValueError("pos_vel_velocity list length must match the controlled joint count.")
+        if isinstance(self.config.pos_vel_velocity, list) and len(self.config.pos_vel_velocity) not in {
+            len(self.motor_names),
+            len(self.config.motor_can_ids),
+        }:
+            raise ValueError(
+                "pos_vel_velocity list length must match the controlled joint count or the full motor count."
+            )
         self._return_to_initial_vlim_rad()
         if self.config.rt_command_gap_us < 0:
             raise ValueError("rt_command_gap_us must be >= 0.")
@@ -110,13 +113,30 @@ class SeeedB601RTFollower(Robot):
             features["gripper.pos"] = float
         return features
 
+    def _observation_motor_key(self, motor_name: str) -> str:
+        if motor_name not in KINEMATIC_MOTORS:
+            return motor_name
+        return f"joint_{KINEMATIC_MOTORS.index(motor_name) + 1}"
+
     @property
     def _observation_motors_ft(self) -> dict[str, type]:
         features: dict[str, type] = {}
         for motor in self.motor_names:
-            features[f"{motor}.pos"] = float
-            features[f"{motor}.vel"] = float
-            features[f"{motor}.torque"] = float
+            obs_key = self._observation_motor_key(motor)
+            if motor == "gripper":
+                features[f"{obs_key}.pos"] = float
+                if self.config.enable_observation_gripper_vel:
+                    features[f"{obs_key}.vel"] = float
+                if self.config.enable_observation_gripper_torque:
+                    features[f"{obs_key}.torque"] = float
+                continue
+
+            if self.config.enable_observation_joint_pos:
+                features[f"{obs_key}.pos"] = float
+            if self.config.enable_observation_joint_vel:
+                features[f"{obs_key}.vel"] = float
+            if self.config.enable_observation_joint_torque:
+                features[f"{obs_key}.torque"] = float
         return features
 
     @property
@@ -165,7 +185,11 @@ class SeeedB601RTFollower(Robot):
     def _velocity_limits_rad(self) -> list[float]:
         velocity = self.config.pos_vel_velocity
         if isinstance(velocity, list):
-            values = velocity
+            if len(velocity) == len(self.motor_names):
+                values = velocity
+            else:
+                all_motor_names = list(self.config.motor_can_ids)
+                values = [velocity[all_motor_names.index(motor_name)] for motor_name in self.motor_names]
         else:
             values = [velocity] * len(self.motor_names)
         return [math.radians(float(v)) for v in values]
@@ -269,6 +293,14 @@ class SeeedB601RTFollower(Robot):
         _, _, end_pose = model.fk(self._kinematic_joint_rad(positions_deg), "")
         return np.asarray(end_pose, dtype=float) @ self._tool_tcp_transform()
 
+    def _gripper_pos_to_norm(self, gripper_pos_deg: float) -> float:
+        open_deg, closed_deg = self.config.joint_limits["gripper"]
+        span = closed_deg - open_deg
+        if abs(span) < 1e-9:
+            return 1.0
+        gripper_norm = (float(gripper_pos_deg) - open_deg) / span
+        return max(0.0, min(1.0, gripper_norm))
+
     def get_current_tcp_pose_quat(self) -> np.ndarray:
         """Return current TCP pose as [x, y, z, qw, qx, qy, qz, gripper_norm]."""
         if self.arm is None or not self.is_connected:
@@ -284,11 +316,7 @@ class SeeedB601RTFollower(Robot):
 
         gripper_norm = 1.0
         if "gripper" in positions_deg and "gripper" in self.config.joint_limits:
-            open_deg, closed_deg = self.config.joint_limits["gripper"]
-            span = closed_deg - open_deg
-            if abs(span) > 1e-9:
-                gripper_norm = (positions_deg["gripper"] - open_deg) / span
-                gripper_norm = max(0.0, min(1.0, gripper_norm))
+            gripper_norm = self._gripper_pos_to_norm(positions_deg["gripper"])
 
         return np.array(
             [
@@ -442,7 +470,7 @@ class SeeedB601RTFollower(Robot):
     def _configure_gripper_force_pos_mode(self) -> None:
         if (
             self.config.control_mode.lower() != "pos_vel"
-            or not self.config.gripper_force_pos_enabled
+            or not self.config.enabled_gripper_force
             or "gripper" not in self.motor_names
         ):
             return
@@ -488,9 +516,21 @@ class SeeedB601RTFollower(Robot):
 
         obs_dict: dict[str, Any] = {}
         for motor_name in self.motor_names:
-            obs_dict[f"{motor_name}.pos"] = pos_deg[motor_name]
-            obs_dict[f"{motor_name}.vel"] = vel_deg[motor_name]
-            obs_dict[f"{motor_name}.torque"] = torque[motor_name]
+            obs_key = self._observation_motor_key(motor_name)
+            if motor_name == "gripper":
+                obs_dict[f"{obs_key}.pos"] = self._gripper_pos_to_norm(pos_deg[motor_name])
+                if self.config.enable_observation_gripper_vel:
+                    obs_dict[f"{obs_key}.vel"] = vel_deg[motor_name]
+                if self.config.enable_observation_gripper_torque:
+                    obs_dict[f"{obs_key}.torque"] = torque[motor_name]
+                continue
+
+            if self.config.enable_observation_joint_pos:
+                obs_dict[f"{obs_key}.pos"] = pos_deg[motor_name]
+            if self.config.enable_observation_joint_vel:
+                obs_dict[f"{obs_key}.vel"] = vel_deg[motor_name]
+            if self.config.enable_observation_joint_torque:
+                obs_dict[f"{obs_key}.torque"] = torque[motor_name]
 
         if self.config.action_mode.lower() == "cartesian":
             tcp_pose = self._tcp_pose_matrix_from_positions(pos_deg)
@@ -529,7 +569,7 @@ class SeeedB601RTFollower(Robot):
     def _force_pos_flags(self) -> tuple[list[bool] | None, list[float] | None]:
         if (
             self.config.control_mode.lower() != "pos_vel"
-            or not self.config.gripper_force_pos_enabled
+            or not self.config.enabled_gripper_force
             or "gripper" not in self.motor_names
         ):
             return None, None
@@ -555,8 +595,10 @@ class SeeedB601RTFollower(Robot):
         """Return per-joint reset velocity limits in rad/s."""
         spec = self.config.return_to_initial_vlim_deg_s
         normal_vlim = self._velocity_limits_rad()
-        if isinstance(spec, (list, tuple)) and len(spec) != len(self.motor_names):
-            raise ValueError("return_to_initial_vlim_deg_s list length must match the controlled joint count.")
+        if isinstance(spec, (list, tuple)) and len(spec) not in {len(self.motor_names), len(self.config.motor_can_ids)}:
+            raise ValueError(
+                "return_to_initial_vlim_deg_s list length must match the controlled joint count or the full motor count."
+            )
 
         values: list[float] = []
         for idx, motor_name in enumerate(self.motor_names):
@@ -565,7 +607,11 @@ class SeeedB601RTFollower(Robot):
                     raise ValueError(f"return_to_initial_vlim_deg_s missing key: {motor_name}")
                 deg_s = spec[motor_name]
             elif isinstance(spec, (list, tuple)):
-                deg_s = spec[idx]
+                if len(spec) == len(self.motor_names):
+                    deg_s = spec[idx]
+                else:
+                    all_motor_names = list(self.config.motor_can_ids)
+                    deg_s = spec[all_motor_names.index(motor_name)]
             else:
                 deg_s = spec
 

@@ -19,7 +19,7 @@ def test_config_registers_and_generates_rt_yaml():
 
     assert robot.name == "seeed_b601_rt_follower"
     assert "shoulder_pan.pos" in robot.action_features
-    assert "shoulder_pan.vel" in robot.observation_features
+    assert "gripper.pos" in robot.observation_features
 
     yaml = robot._render_rt_arm_yaml()
     assert "channel: /dev/ttyACM0" in yaml
@@ -31,6 +31,56 @@ def test_config_registers_and_generates_rt_yaml():
     assert cfg.disable_torque_on_disconnect is False
 
 
+def test_observation_joint_features_are_independently_configurable():
+    cfg = SeeedB601RTFollowerConfig(
+        port="/dev/ttyACM0",
+        enable_observation_joint_pos=True,
+        enable_observation_joint_vel=False,
+        enable_observation_joint_torque=False,
+    )
+    robot = SeeedB601RTFollower(cfg)
+
+    assert "shoulder_pan.pos" in robot.action_features
+    assert "joint_1.pos" in robot.observation_features
+    assert "joint_1.vel" not in robot.observation_features
+    assert "joint_1.torque" not in robot.observation_features
+    assert "shoulder_pan.pos" not in robot.observation_features
+    assert "gripper.pos" in robot.observation_features
+    assert "gripper.vel" not in robot.observation_features
+    assert "gripper.torque" not in robot.observation_features
+    assert "joint_7.pos" not in robot.observation_features
+
+
+def test_gripper_observation_is_controlled_separately_from_joint_observation():
+    cfg = SeeedB601RTFollowerConfig(
+        port="/dev/ttyACM0",
+        enable_observation_joint_pos=False,
+        enable_observation_joint_vel=False,
+        enable_observation_joint_torque=False,
+        enable_observation_gripper_vel=True,
+        enable_observation_gripper_torque=True,
+    )
+    robot = SeeedB601RTFollower(cfg)
+
+    assert "joint_1.pos" not in robot.observation_features
+    assert "joint_1.vel" not in robot.observation_features
+    assert "joint_1.torque" not in robot.observation_features
+    assert "gripper.pos" in robot.observation_features
+    assert "gripper.vel" in robot.observation_features
+    assert "gripper.torque" in robot.observation_features
+
+
+def test_control_gripper_controls_gripper_action_and_observation():
+    cfg = SeeedB601RTFollowerConfig(port="/dev/ttyACM0", control_gripper=False)
+    robot = SeeedB601RTFollower(cfg)
+
+    assert "gripper.pos" not in robot.action_features
+    assert "gripper.pos" not in robot.observation_features
+    assert "gripper.vel" not in robot.observation_features
+    assert "gripper.torque" not in robot.observation_features
+    assert len(robot._velocity_limits_rad()) == 6
+
+
 def test_initial_gripper_pose_is_closed():
     cfg = SeeedB601RTFollowerConfig(port="/dev/ttyACM0")
     robot = SeeedB601RTFollower(cfg)
@@ -40,6 +90,16 @@ def test_initial_gripper_pose_is_closed():
 
     assert positions["shoulder_pan"] == 12.0
     assert positions["gripper"] == 0.0
+
+
+def test_gripper_observation_position_is_normalized():
+    robot = SeeedB601RTFollower(SeeedB601RTFollowerConfig(port="/dev/ttyACM0"))
+
+    assert robot._gripper_pos_to_norm(-270.0) == pytest.approx(0.0)
+    assert robot._gripper_pos_to_norm(-135.0) == pytest.approx(0.5)
+    assert robot._gripper_pos_to_norm(0.0) == pytest.approx(1.0)
+    assert robot._gripper_pos_to_norm(-300.0) == pytest.approx(0.0)
+    assert robot._gripper_pos_to_norm(30.0) == pytest.approx(1.0)
 
 
 def test_return_to_initial_vlim_supports_dict_scalar_and_list():

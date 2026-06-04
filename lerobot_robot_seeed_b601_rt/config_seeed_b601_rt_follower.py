@@ -1,10 +1,37 @@
 from dataclasses import dataclass, field
 from pathlib import Path
+from enum import Enum
 
 from lerobot.cameras import CameraConfig
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense import RealSenseCameraConfig
 from lerobot.robots.robot import RobotConfig
+
+
+class ActionMode(str, Enum):
+    """Control mode for reBot Arm B601.
+
+    JOINT:
+        Action: joint positions (7D) + gripper (1D) = 8D
+        Observation: joint positions (7D) + velocities (7D) + efforts (7D) + gripper (1D) = 22D
+    CARTESIAN:
+        Action: TCP pose (7D) + gripper (1D) = 8D
+        Observation: TCP pose (7D) + gripper (1D) = 8D
+    """
+
+    JOINT = "joint"
+    CARTESIAN = "cartesian"
+
+class ControlMode(str, Enum):
+    """Control mode for reBot Arm B601.
+
+    POS_VEL:
+        Position velocity control.
+    MIT:
+        Motion impedance control.
+    """
+    POS_VEL = "pos_vel"
+    MIT = "motion_impedance"
 
 @RobotConfig.register_subclass("seeed_b601_rt_follower")
 @dataclass
@@ -21,40 +48,32 @@ class SeeedB601RTFollowerConfig(RobotConfig):
 
     disable_torque_on_disconnect: bool = False
     max_relative_target: float | dict[str, float] | None = None
-    cameras: dict[str, CameraConfig] = field(
-        default_factory=lambda: {
-            "head": RealSenseCameraConfig(
-                serial_number_or_name="021422060263",
-                fps=30,
-                width=640,
-                height=480,
-                warmup_s=1.0,
-            ),
-            # "head": OpenCVCameraConfig(
-            #     index_or_path="/dev/video6",
-            #     fourcc="YUYV",
-            #     fps=60,
-            #     width=640,
-            #     height=480,
-            #     warmup_s=1.0,
-            # ),
-        }
-    )
 
-    # LeRobot-facing action mode. "joint" exposes joint targets; "cartesian"
-    # exposes TCP targets and converts them to joint targets internally by IK.
-    action_mode: str = "joint"
+    # LeRobot-facing action and control modes.
+    action_mode: ActionMode = ActionMode.JOINT
+    control_mode: ControlMode = ControlMode.POS_VEL
+
+    # LeRobot-facing action mode. "joint" exposes joint targets; "cartesian" exposes TCP targets.
     control_gripper: bool = True
-    control_mode: str = "pos_vel"
-    gripper_force_pos_enabled: bool = True
+    enabled_gripper_force: bool = True # Whether to enable gripper force control.
     gripper_force_pos_torque_ratio: float = 0.02 # Ratio of gripper force to position torque[0.018 - 1.0]%.
+    enable_observation_joint_pos: bool = False
+    enable_observation_joint_vel: bool = False
+    enable_observation_joint_torque: bool = False
+    enable_observation_gripper_vel: bool = False
+    enable_observation_gripper_torque: bool = False
+
+    # RT control loop parameters.
     rt_rate: float = 150.0
     rt_command_gap_us: int = 0
     rt_priority: int = 99
     rt_cpu: int | None = 3
-    damiao_tx_debug: int = 0
-    debug_motion: bool = False
-    debug_motion_interval_s: float = 1.0
+
+    # Debugging parameters.
+    damiao_tx_debug: int = 0 # print debug Damiao TX information.
+    debug_motion: bool = False # print debug motion information.
+    debug_motion_interval_s: float = 1.0 # print debug motion information every interval seconds.
+
     # Extra fixed transform from the URDF end_link to a custom tool/TCP.
     # The bundled B601 URDF already places end_link at the gripper end frame.
     # Units: meters and degrees, expressed in end_link frame.
@@ -118,5 +137,26 @@ class SeeedB601RTFollowerConfig(RobotConfig):
             "wrist_yaw": (-90.0, 90.0),
             "wrist_roll": (-90.0, 90.0),
             "gripper": (-270.0, 0.0),
+        }
+    )
+
+    # Cameras for the follower robot.
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "head": RealSenseCameraConfig(
+                serial_number_or_name="021422060263",
+                fps=30,
+                width=640,
+                height=480,
+                warmup_s=1.0,
+            ),
+            # "head": OpenCVCameraConfig(
+            #     index_or_path="/dev/video6",
+            #     fourcc="YUYV",
+            #     fps=60,
+            #     width=640,
+            #     height=480,
+            #     warmup_s=1.0,
+            # ),
         }
     )
