@@ -443,6 +443,9 @@ class SeeedB601RTFollower(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         self.arm.enable()
+        current_positions_deg = self._read_positions_deg_blocking()
+        self._clear_possible_mit_torque(current_positions_deg)
+
         mode = self.config.control_mode.lower()
         if mode == "pos_vel":
             self.arm.mode_pos_vel(vlim=self._velocity_limits_rad())
@@ -450,7 +453,7 @@ class SeeedB601RTFollower(Robot):
         else:
             self.arm.mode_mit()
 
-        self._initial_positions_deg, _, _ = self._read_state_deg(request=True)
+        self._initial_positions_deg = dict(current_positions_deg)
         self._apply_initial_gripper_pose(self._initial_positions_deg)
         self._last_goal_deg = dict(self._initial_positions_deg)
         self._set_rt_target_deg(self._initial_positions_deg)
@@ -466,6 +469,53 @@ class SeeedB601RTFollower(Robot):
             float(self.config.rt_rate),
             int(self.config.rt_command_gap_us),
         )
+
+    def _read_positions_deg_blocking(self, attempts: int = 60) -> dict[str, float]:
+        if self.arm is None:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if not hasattr(self.arm, "get_positions_blocking"):
+            raise RuntimeError(
+                "rebotarm_control_rt is missing get_positions_blocking(); reinstall/rebuild it before "
+                "running the B601 RT follower safely."
+            )
+
+        positions = np.asarray(self.arm.get_positions_blocking(attempts=attempts), dtype=float)
+
+        if positions.size != len(self.motor_names):
+            raise RuntimeError(
+                f"Expected {len(self.motor_names)} joint positions, got {positions.size}; "
+                "refusing to build an initial RT target."
+            )
+
+        pos_deg = {
+            motor_name: math.degrees(float(positions[idx]))
+            for idx, motor_name in enumerate(self.motor_names)
+        }
+        self._last_positions_deg = dict(pos_deg)
+        return pos_deg
+
+    def _clear_possible_mit_torque(self, positions_deg: dict[str, float], frames: int = 5, dt_s: float = 0.02) -> None:
+        if self.arm is None:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        pos_rad = [math.radians(positions_deg[motor_name]) for motor_name in self.motor_names]
+        zeros = [0.0] * len(self.motor_names)
+        try:
+            self.arm.mode_mit(kp=zeros, kd=zeros, stabilize_delay=0.0)
+            for _ in range(frames):
+                self.arm.mit(
+                    pos=pos_rad,
+                    vel=zeros,
+                    kp=zeros,
+                    kd=zeros,
+                    tau=zeros,
+                    request_feedback=False,
+                )
+                time.sleep(dt_s)
+        except Exception:
+            logger.warning("Failed to clear possible MIT torque before taking control.", exc_info=True)
+            raise
 
     def _configure_gripper_force_pos_mode(self) -> None:
         if (
