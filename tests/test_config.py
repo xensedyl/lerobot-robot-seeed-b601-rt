@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from lerobot_robot_seeed_b601_rt import SeeedB601RTFollowerConfig
+from lerobot_robot_seeed_b601_rt import BiSeeedB601RTFollowerConfig, SeeedB601RTFollowerConfig
+from lerobot_robot_seeed_b601_rt.bi_seeed_b601_rt_follower import BiSeeedB601RTFollower
 from lerobot_robot_seeed_b601_rt.seeed_b601_rt_follower import SeeedB601RTFollower
 from lerobot.robots.utils import make_robot_from_config
 
@@ -29,6 +30,27 @@ def test_config_registers_and_generates_rt_yaml():
     assert cfg.rt_rate == 150.0
     assert cfg.rt_command_gap_us == 0
     assert cfg.disable_torque_on_disconnect is False
+
+
+def test_bi_config_registers_and_prefixes_features():
+    cfg = BiSeeedB601RTFollowerConfig(
+        id="bi_test",
+        calibration_dir=Path("/tmp/lerobot-bi-b601-rt-test"),
+        action_mode="cartesian",
+        cameras={},
+    )
+    robot = make_robot_from_config(cfg)
+
+    assert isinstance(robot, BiSeeedB601RTFollower)
+    assert robot.name == "bi_seeed_b601_rt_follower"
+    assert "left_tcp.x" in robot.action_features
+    assert "right_tcp.x" in robot.action_features
+    assert "left_gripper.pos" in robot.action_features
+    assert "right_gripper.pos" in robot.action_features
+    assert "left_tcp.x" in robot.observation_features
+    assert "right_tcp.x" in robot.observation_features
+    assert "left_gripper.pos" in robot.observation_features
+    assert "right_gripper.pos" in robot.observation_features
 
 
 def test_observation_joint_features_are_independently_configurable():
