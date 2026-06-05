@@ -27,6 +27,13 @@ def test_config_registers_and_generates_rt_yaml():
     assert "name: shoulder_pan" in yaml
     assert "motor_id: 0x01" in yaml
     assert "vendor: \"damiao\"" in yaml
+    assert "vel_kp: 0.0125" in yaml
+    assert "vel_ki: 0.004" in yaml
+    assert "pos_kp: 150.0" in yaml
+    assert "pos_ki: 0.5" in yaml
+    assert "name: shoulder_lift" in yaml
+    assert "pos_kp: 200.0" in yaml
+    assert "pos_ki: 10.0" in yaml
     assert cfg.rt_rate == 150.0
     assert cfg.rt_command_gap_us == 0
     assert cfg.disable_torque_on_disconnect is False
@@ -38,11 +45,24 @@ def test_bi_config_registers_and_prefixes_features():
         calibration_dir=Path("/tmp/lerobot-bi-b601-rt-test"),
         action_mode="cartesian",
         cameras={},
+        right_pos_vel_gains={
+            "shoulder_pan": (0.02, 0.005, 180.0, 1.0),
+            "shoulder_lift": (0.02, 0.005, 180.0, 1.0),
+            "elbow_flex": (0.02, 0.005, 180.0, 1.0),
+            "wrist_flex": (0.001, 0.003, 60.0, 1.0),
+            "wrist_yaw": (0.001, 0.003, 60.0, 1.0),
+            "wrist_roll": (0.001, 0.003, 60.0, 1.0),
+            "gripper": (0.001, 0.003, 60.0, 1.0),
+        },
     )
     robot = make_robot_from_config(cfg)
 
     assert isinstance(robot, BiSeeedB601RTFollower)
     assert robot.name == "bi_seeed_b601_rt_follower"
+    assert cfg.left_rt_cpu == 3
+    assert cfg.right_rt_cpu == 4
+    assert robot.left.config.pos_vel_gains["shoulder_lift"] == (0.013, 0.004, 200.0, 10.0)
+    assert robot.right.config.pos_vel_gains["shoulder_lift"] == (0.02, 0.005, 180.0, 1.0)
     assert "left_tcp.x" in robot.action_features
     assert "right_tcp.x" in robot.action_features
     assert "left_gripper.pos" in robot.action_features
@@ -172,3 +192,23 @@ def test_return_to_initial_vlim_rejects_invalid_values():
         SeeedB601RTFollower(
             SeeedB601RTFollowerConfig(port="/dev/ttyACM0", return_to_initial_vlim_deg_s=[15.0])
         )
+
+
+def test_pos_vel_gains_are_required_and_validated():
+    with pytest.raises(ValueError, match="pos_vel_gains missing keys"):
+        SeeedB601RTFollower(
+            SeeedB601RTFollowerConfig(
+                port="/dev/ttyACM0",
+                pos_vel_gains={"shoulder_pan": (0.0125, 0.004, 150.0, 0.5)},
+            )
+        )
+
+    bad_tuple_cfg = SeeedB601RTFollowerConfig(port="/dev/ttyACM0")
+    bad_tuple_cfg.pos_vel_gains["shoulder_pan"] = (0.0125, 0.004, 150.0)
+    with pytest.raises(ValueError, match="must contain"):
+        SeeedB601RTFollower(bad_tuple_cfg)
+
+    bad_value_cfg = SeeedB601RTFollowerConfig(port="/dev/ttyACM0")
+    bad_value_cfg.pos_vel_gains["shoulder_pan"] = (-1.0, 0.004, 150.0, 0.5)
+    with pytest.raises(ValueError, match="values must be >= 0"):
+        SeeedB601RTFollower(bad_value_cfg)

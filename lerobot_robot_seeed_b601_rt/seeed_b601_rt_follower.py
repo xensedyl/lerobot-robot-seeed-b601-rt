@@ -68,11 +68,21 @@ class SeeedB601RTFollower(Robot):
         required_maps = {
             "motor_models": set(self.config.motor_models),
             "joint_limits": set(self.config.joint_limits),
+            "pos_vel_gains": set(self.config.pos_vel_gains),
         }
         for field_name, keys in required_maps.items():
             missing = ids - keys
             if missing:
                 raise ValueError(f"{field_name} missing keys: {sorted(missing)}")
+        for motor_name in ids:
+            gains = self.config.pos_vel_gains[motor_name]
+            if len(gains) != 4:
+                raise ValueError(
+                    f"pos_vel_gains[{motor_name!r}] must contain "
+                    "(vel_kp, vel_ki, pos_kp, pos_ki)."
+                )
+            if any(float(value) < 0.0 for value in gains):
+                raise ValueError(f"pos_vel_gains[{motor_name!r}] values must be >= 0.")
         mode = self.config.control_mode.lower()
         if mode not in {"pos_vel", "mit"}:
             raise ValueError("control_mode must be 'pos_vel' or 'mit'.")
@@ -389,6 +399,7 @@ class SeeedB601RTFollower(Robot):
         vlim = self._velocity_limits_rad()
         for idx, motor_name in enumerate(self.motor_names):
             motor_id, feedback_id = self.config.motor_can_ids[motor_name]
+            vel_kp, vel_ki, pos_kp, pos_ki = self.config.pos_vel_gains[motor_name]
             lines.extend(
                 [
                     f"  - name: {motor_name}",
@@ -397,6 +408,10 @@ class SeeedB601RTFollower(Robot):
                     f"    model: \"{self.config.motor_models[motor_name]}\"",
                     f"    vendor: \"{self._default_vendor(motor_name)}\"",
                     "    POS_VEL:",
+                    f"      vel_kp: {float(vel_kp)}",
+                    f"      vel_ki: {float(vel_ki)}",
+                    f"      pos_kp: {float(pos_kp)}",
+                    f"      pos_ki: {float(pos_ki)}",
                     f"      vlim: {float(vlim[idx])}",
                     "",
                 ]
@@ -762,7 +777,8 @@ class SeeedB601RTFollower(Robot):
         }
         max_delta_name = max(self.motor_names, key=lambda name: abs(deltas[name]))
         logger.info(
-            "motion debug: max_delta=%s %.2f deg | target=%s | current=%s | rt_overruns(send/read)=%s/%s",
+            "%s motion debug: max_delta=%s %.2f deg | target=%s | current=%s | rt_overruns(send/read)=%s/%s",
+            self.id or self.config.port,
             max_delta_name,
             deltas[max_delta_name],
             {name: round(goal_pos[name], 2) for name in self.motor_names},

@@ -42,7 +42,7 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
     left_rt_priority: int = 99
     right_rt_priority: int = 99
     left_rt_cpu: int | None = 3
-    right_rt_cpu: int | None = 3
+    right_rt_cpu: int | None = 4
 
     damiao_tx_debug: int = 0
     debug_motion: bool = False
@@ -78,6 +78,30 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
 
     pos_vel_velocity: float | list[float] = field(
         default_factory=lambda: [150, 150, 150, 150, 150, 150, 300]
+    )
+    # Damiao POS_VEL register gains written before starting RT loops.
+    # Tuple order: (vel_kp, vel_ki, pos_kp, pos_ki).
+    left_pos_vel_gains: dict[str, tuple[float, float, float, float]] = field(
+        default_factory=lambda: {
+            "shoulder_pan": (0.0125, 0.004, 150.0, 0.5),
+            "shoulder_lift": (0.013, 0.004, 200.0, 10.0),
+            "elbow_flex": (0.013, 0.004, 200.0, 10.0),
+            "wrist_flex": (0.0008, 0.002, 50.0, 1.0),
+            "wrist_yaw": (0.0008, 0.004, 50.0, 1.0),
+            "wrist_roll": (0.0008, 0.002, 50.0, 1.0),
+            "gripper": (0.0008, 0.002, 50.0, 1.0),
+        }
+    )
+    right_pos_vel_gains: dict[str, tuple[float, float, float, float]] = field(
+        default_factory=lambda: {
+            "shoulder_pan": (0.0125, 0.004, 150.0, 0.5),
+            "shoulder_lift": (0.013, 0.004, 200.0, 10.0),
+            "elbow_flex": (0.013, 0.004, 200.0, 10.0),
+            "wrist_flex": (0.0008, 0.002, 50.0, 1.0),
+            "wrist_yaw": (0.0008, 0.004, 50.0, 1.0),
+            "wrist_roll": (0.0008, 0.002, 50.0, 1.0),
+            "gripper": (0.0008, 0.002, 50.0, 1.0),
+        }
     )
     return_to_initial_vlim_deg_s: float | list[float] | dict[str, float] = field(
         default_factory=lambda: {

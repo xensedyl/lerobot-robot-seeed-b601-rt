@@ -72,6 +72,9 @@ class BiSeeedB601RTFollower(Robot):
             motor_vendor=self.config.motor_vendor,
             motor_vendors=self.config.motor_vendors,
             pos_vel_velocity=self.config.pos_vel_velocity,
+            pos_vel_gains=(
+                self.config.left_pos_vel_gains if side == "left" else self.config.right_pos_vel_gains
+            ),
             return_to_initial_vlim_deg_s=self.config.return_to_initial_vlim_deg_s,
             joint_limits=self.config.joint_limits,
             cameras={},
