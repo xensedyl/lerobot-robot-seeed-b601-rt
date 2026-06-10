@@ -44,6 +44,11 @@ class BiSeeedB601RTFollower(Robot):
             arm_cfg_path=(
                 self.config.left_arm_cfg_path if side == "left" else self.config.right_arm_cfg_path
             ),
+            kinematic_urdf_path=(
+                self.config.left_kinematic_urdf_path
+                if side == "left"
+                else self.config.right_kinematic_urdf_path
+            ),
             disable_torque_on_disconnect=self.config.disable_torque_on_disconnect,
             max_relative_target=self.config.max_relative_target,
             action_mode=self.config.action_mode,

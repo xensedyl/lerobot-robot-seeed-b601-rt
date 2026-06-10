@@ -47,6 +47,9 @@ class SeeedB601RTFollowerConfig(RobotConfig):
     # Optional prebuilt rebotarm_control_rt actuator config.
     # If omitted, this LeRobot plugin generates one from the B601 mapping below.
     arm_cfg_path: str | Path | None = None
+    # URDF used by the Cartesian kinematics model. Relative paths are resolved
+    # by rebotarm_control_rt; None uses its built-in default URDF.
+    kinematic_urdf_path: str | Path | None = "lerobot_robot_seeed_b601_rt/tool_calibration.urdf"
 
     disable_torque_on_disconnect: bool = False
     max_relative_target: float | dict[str, float] | None = None

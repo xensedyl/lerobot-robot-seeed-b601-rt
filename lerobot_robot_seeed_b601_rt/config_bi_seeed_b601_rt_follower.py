@@ -21,6 +21,10 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
     right_id: str = "right_follower"
     left_arm_cfg_path: str | Path | None = None
     right_arm_cfg_path: str | Path | None = None
+    # URDFs used by the Cartesian kinematics models. Relative paths are
+    # resolved by rebotarm_control_rt; None uses its built-in default URDF.
+    left_kinematic_urdf_path: str | Path | None = "lerobot_robot_seeed_b601_rt/tool_calibration.urdf"
+    right_kinematic_urdf_path: str | Path | None = "lerobot_robot_seeed_b601_rt/tool_calibration.urdf"
 
     disable_torque_on_disconnect: bool = False
     max_relative_target: float | dict[str, float] | None = None

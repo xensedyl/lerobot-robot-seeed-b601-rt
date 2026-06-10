@@ -271,7 +271,7 @@ class SeeedB601RTFollower(Robot):
         if self._kinematic_model is None:
             from rebotarm_control_rt.kinematics import load_robot_model
 
-            self._kinematic_model = load_robot_model()
+            self._kinematic_model = load_robot_model(self.config.kinematic_urdf_path)
             self._kinematic_frame_id = self._kinematic_model.end_effector_frame_id()
         return self._kinematic_model
 
