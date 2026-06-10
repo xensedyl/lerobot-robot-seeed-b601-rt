@@ -56,7 +56,7 @@ class SeeedB601RTFollowerConfig(RobotConfig):
     control_mode: ControlMode = ControlMode.POS_VEL
 
     # LeRobot-facing action mode. "joint" exposes joint targets; "cartesian" exposes TCP targets.
-    control_gripper: bool = True
+    control_gripper: bool = False
     enabled_gripper_force: bool = True # Whether to enable gripper force control.
     gripper_force_pos_torque_ratio: float = 0.02 # Ratio of gripper force to position torque[0.018 - 1.0]%.
     enable_observation_joint_pos: bool = False
@@ -75,12 +75,6 @@ class SeeedB601RTFollowerConfig(RobotConfig):
     damiao_tx_debug: int = 0 # print debug Damiao TX information.
     debug_motion: bool = False # print debug motion information.
     debug_motion_interval_s: float = 1.0 # print debug motion information every interval seconds.
-
-    # Extra fixed transform from the URDF end_link to a custom tool/TCP.
-    # The bundled B601 URDF already places end_link at the gripper end frame.
-    # Units: meters and degrees, expressed in end_link frame.
-    tool_tcp_offset_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    tool_tcp_offset_rpy_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     # Maps LeRobot joint names to (command id, feedback id).
     motor_can_ids: dict[str, tuple[int, int]] = field(
@@ -158,13 +152,13 @@ class SeeedB601RTFollowerConfig(RobotConfig):
     # Cameras for the follower robot.
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            "head": RealSenseCameraConfig(
-                serial_number_or_name="021422060263",
-                fps=30,
-                width=640,
-                height=480,
-                warmup_s=1.0,
-            ),
+            # "head": RealSenseCameraConfig(
+            #     serial_number_or_name="021422060263",
+            #     fps=30,
+            #     width=640,
+            #     height=480,
+            #     warmup_s=1.0,
+            # ),
             # "head": OpenCVCameraConfig(
             #     index_or_path="/dev/video6",
             #     fourcc="YUYV",

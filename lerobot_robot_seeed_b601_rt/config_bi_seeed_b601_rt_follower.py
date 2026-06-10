@@ -48,9 +48,6 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
     debug_motion: bool = False
     debug_motion_interval_s: float = 1.0
 
-    tool_tcp_offset_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    tool_tcp_offset_rpy_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)
-
     motor_can_ids: dict[str, tuple[int, int]] = field(
         default_factory=lambda: {
             "shoulder_pan": (0x01, 0x11),

@@ -107,11 +107,6 @@ class SeeedB601RTFollower(Robot):
             raise ValueError("debug_motion_interval_s must be > 0.")
         if not 0.0 <= self.config.gripper_force_pos_torque_ratio <= 1.0:
             raise ValueError("gripper_force_pos_torque_ratio must be in [0, 1].")
-        if len(self.config.tool_tcp_offset_xyz) != 3:
-            raise ValueError("tool_tcp_offset_xyz must have 3 values.")
-        if len(self.config.tool_tcp_offset_rpy_deg) != 3:
-            raise ValueError("tool_tcp_offset_rpy_deg must have 3 values.")
-
     @property
     def _action_motors_ft(self) -> dict[str, type]:
         return {f"{motor}.pos": float for motor in self.motor_names}
@@ -205,24 +200,6 @@ class SeeedB601RTFollower(Robot):
         return [math.radians(float(v)) for v in values]
 
     @staticmethod
-    def _rpy_deg_to_matrix(rpy_deg: tuple[float, float, float]) -> np.ndarray:
-        roll, pitch, yaw = [math.radians(float(v)) for v in rpy_deg]
-        cr, sr = math.cos(roll), math.sin(roll)
-        cp, sp = math.cos(pitch), math.sin(pitch)
-        cy, sy = math.cos(yaw), math.sin(yaw)
-
-        rot_x = np.array([[1.0, 0.0, 0.0], [0.0, cr, -sr], [0.0, sr, cr]], dtype=float)
-        rot_y = np.array([[cp, 0.0, sp], [0.0, 1.0, 0.0], [-sp, 0.0, cp]], dtype=float)
-        rot_z = np.array([[cy, -sy, 0.0], [sy, cy, 0.0], [0.0, 0.0, 1.0]], dtype=float)
-        return rot_z @ rot_y @ rot_x
-
-    def _tool_tcp_transform(self) -> np.ndarray:
-        transform = np.eye(4, dtype=float)
-        transform[:3, :3] = self._rpy_deg_to_matrix(self.config.tool_tcp_offset_rpy_deg)
-        transform[:3, 3] = np.asarray(self.config.tool_tcp_offset_xyz, dtype=float)
-        return transform
-
-    @staticmethod
     def _rotation_6d_to_matrix(action: RobotAction) -> np.ndarray:
         a1 = np.array([action["tcp.r1"], action["tcp.r2"], action["tcp.r3"]], dtype=float)
         a2 = np.array([action["tcp.r4"], action["tcp.r5"], action["tcp.r6"]], dtype=float)
@@ -301,7 +278,7 @@ class SeeedB601RTFollower(Robot):
     def _tcp_pose_matrix_from_positions(self, positions_deg: dict[str, float]) -> np.ndarray:
         model = self._load_kinematic_model()
         _, _, end_pose = model.fk(self._kinematic_joint_rad(positions_deg), "")
-        return np.asarray(end_pose, dtype=float) @ self._tool_tcp_transform()
+        return np.asarray(end_pose, dtype=float)
 
     def _gripper_pos_to_norm(self, gripper_pos_deg: float) -> float:
         open_deg, closed_deg = self.config.joint_limits["gripper"]
@@ -356,10 +333,9 @@ class SeeedB601RTFollower(Robot):
         target_tcp = np.eye(4, dtype=float)
         target_tcp[:3, :3] = self._rotation_6d_to_matrix(action)
         target_tcp[:3, 3] = [float(action["tcp.x"]), float(action["tcp.y"]), float(action["tcp.z"])]
-        target_end = target_tcp @ np.linalg.inv(self._tool_tcp_transform())
 
         q_seed = self._kinematic_joint_rad(self._last_positions_deg)
-        result = model.solve_ik(target_end, q_seed, self._kinematic_frame_id)
+        result = model.solve_ik(target_tcp, q_seed, self._kinematic_frame_id)
         if not result.success:
             logger.warning(
                 "Pico4 IK did not fully converge: error=%.5f iterations=%s; using best solution.",

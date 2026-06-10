@@ -65,8 +65,6 @@ class BiSeeedB601RTFollower(Robot):
             damiao_tx_debug=self.config.damiao_tx_debug,
             debug_motion=self.config.debug_motion,
             debug_motion_interval_s=self.config.debug_motion_interval_s,
-            tool_tcp_offset_xyz=self.config.tool_tcp_offset_xyz,
-            tool_tcp_offset_rpy_deg=self.config.tool_tcp_offset_rpy_deg,
             motor_can_ids=self.config.motor_can_ids,
             motor_models=self.config.motor_models,
             motor_vendor=self.config.motor_vendor,
