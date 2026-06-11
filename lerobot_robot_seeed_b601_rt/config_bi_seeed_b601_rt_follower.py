@@ -30,7 +30,7 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
     disable_torque_on_disconnect: bool = False
     max_relative_target: float | dict[str, float] | None = None
 
-    action_mode: ActionMode = ActionMode.JOINT
+    action_mode: ActionMode = ActionMode.JOINT # JOINT or CARTESIAN
     control_mode: ControlMode = ControlMode.POS_VEL # MIT or POS_VEL
 
     control_gripper: bool = True
