@@ -14,7 +14,7 @@ from lerobot.robots.robot import Robot
 from lerobot.robots.utils import ensure_safe_goal_position
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
-from .config_seeed_b601_rt_follower import SeeedB601RTFollowerConfig
+from .config_seeed_b601_rt_follower import GripperType, SeeedB601RTFollowerConfig
 
 
 logger = logging.getLogger(__name__)
@@ -50,9 +50,18 @@ class SeeedB601RTFollower(Robot):
         super().__init__(config)
         self.config = config
         self.arm = None
+        self.serial_gripper = None
         self.cameras = make_cameras_from_configs(config.cameras)
+        self._uses_serial_gripper = bool(
+            config.control_gripper and config.gripper_type == GripperType.SERIAL
+        )
+        self._uses_builtin_gripper = bool(
+            config.control_gripper and config.gripper_type == GripperType.REBOTARMB601
+        )
         self.motor_names = [
-            name for name in config.motor_can_ids if config.control_gripper or name != "gripper"
+            name
+            for name in config.motor_can_ids
+            if self._uses_builtin_gripper or name != "gripper"
         ]
         self._generated_cfg_path: Path | None = None
         self._initial_positions_deg: dict[str, float] = {}
@@ -89,6 +98,8 @@ class SeeedB601RTFollower(Robot):
         action_mode = self.config.action_mode.lower()
         if action_mode not in {"joint", "cartesian"}:
             raise ValueError("action_mode must be 'joint' or 'cartesian'.")
+        if isinstance(self.config.gripper_type, str):
+            self.config.gripper_type = GripperType(self.config.gripper_type)
         if self.config.can_adapter not in {"damiao", "socketcan", "robstride"}:
             raise ValueError("can_adapter must be 'damiao', 'socketcan', or 'robstride'.")
         if isinstance(self.config.pos_vel_velocity, list) and len(self.config.pos_vel_velocity) not in {
@@ -105,16 +116,22 @@ class SeeedB601RTFollower(Robot):
             raise ValueError("damiao_tx_debug must be >= 0.")
         if self.config.debug_motion_interval_s <= 0:
             raise ValueError("debug_motion_interval_s must be > 0.")
-        if not 0.0 <= self.config.gripper_force_pos_torque_ratio <= 1.0:
+        if (
+            self._uses_builtin_gripper
+            and not 0.0 <= self.config.gripper_force_pos_torque_ratio <= 1.0
+        ):
             raise ValueError("gripper_force_pos_torque_ratio must be in [0, 1].")
     @property
     def _action_motors_ft(self) -> dict[str, type]:
-        return {f"{motor}.pos": float for motor in self.motor_names}
+        features = {f"{motor}.pos": float for motor in self.motor_names}
+        if self._uses_serial_gripper:
+            features["gripper.pos"] = float
+        return features
 
     @property
     def _action_tcp_ft(self) -> dict[str, type]:
         features = dict.fromkeys(TCP_POSE_KEYS, float)
-        if "gripper" in self.motor_names:
+        if self.config.control_gripper:
             features["gripper.pos"] = float
         return features
 
@@ -126,6 +143,8 @@ class SeeedB601RTFollower(Robot):
     @property
     def _observation_motors_ft(self) -> dict[str, type]:
         features: dict[str, type] = {}
+        if self._uses_serial_gripper:
+            features["gripper.pos"] = float
         for motor in self.motor_names:
             obs_key = self._observation_motor_key(motor)
             if motor == "gripper":
@@ -169,7 +188,15 @@ class SeeedB601RTFollower(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.arm is not None and all(cam.is_connected for cam in self.cameras.values())
+        serial_gripper_connected = (
+            not self._uses_serial_gripper
+            or (self.serial_gripper is not None and self.serial_gripper.is_connected)
+        )
+        return (
+            self.arm is not None
+            and serial_gripper_connected
+            and all(cam.is_connected for cam in self.cameras.values())
+        )
 
     @property
     def is_calibrated(self) -> bool:
@@ -288,6 +315,17 @@ class SeeedB601RTFollower(Robot):
         gripper_norm = (float(gripper_pos_deg) - open_deg) / span
         return max(0.0, min(1.0, gripper_norm))
 
+    def _current_gripper_norm(self) -> float:
+        if self._uses_serial_gripper:
+            if self.serial_gripper is None:
+                return 1.0
+            # LeRobot/B601 convention: 0=open, 1=closed.
+            # SerialGripper convention: 0=closed, 1=open.
+            return 1.0 - float(self.serial_gripper.get_gripper_position())
+        if "gripper" in self._last_positions_deg:
+            return self._gripper_pos_to_norm(self._last_positions_deg["gripper"])
+        return 1.0
+
     def get_current_tcp_pose_quat(self) -> np.ndarray:
         """Return current TCP pose as [x, y, z, qw, qx, qy, qz, gripper_norm]."""
         if self.arm is None or not self.is_connected:
@@ -301,9 +339,7 @@ class SeeedB601RTFollower(Robot):
         tcp_pose = self._tcp_pose_matrix_from_positions(positions_deg)
         quat = self._matrix_to_quaternion_wxyz(tcp_pose[:3, :3])
 
-        gripper_norm = 1.0
-        if "gripper" in positions_deg and "gripper" in self.config.joint_limits:
-            gripper_norm = self._gripper_pos_to_norm(positions_deg["gripper"])
+        gripper_norm = self._current_gripper_norm()
 
         return np.array(
             [
@@ -351,6 +387,8 @@ class SeeedB601RTFollower(Robot):
             gripper_norm = max(0.0, min(1.0, float(action["gripper.pos"])))
             open_deg, closed_deg = self.config.joint_limits["gripper"]
             joint_action["gripper.pos"] = open_deg + gripper_norm * (closed_deg - open_deg)
+        elif self._uses_serial_gripper and "gripper.pos" in action:
+            joint_action["gripper.pos"] = max(0.0, min(1.0, float(action["gripper.pos"])))
 
         return joint_action
 
@@ -411,6 +449,16 @@ class SeeedB601RTFollower(Robot):
         try:
             arm.connect()
             self.arm = arm
+            if self._uses_serial_gripper:
+                from .serial_gripper import SerialGripper
+
+                if self.config.serial_gripper is None:
+                    raise ValueError(
+                        "gripper_type=serial requires serial gripper config. "
+                        "Set serial_gripper_sn or serial_gripper_port in the robot config."
+                    )
+                self.serial_gripper = SerialGripper(self.config.serial_gripper)
+                self.serial_gripper.connect()
             if not self.cameras:
                 logger.info("No cameras configured; skipping camera connect.")
             else:
@@ -424,6 +472,12 @@ class SeeedB601RTFollower(Robot):
                 arm.disconnect()
             except Exception:
                 pass
+            if self.serial_gripper is not None:
+                try:
+                    self.serial_gripper.disconnect()
+                except Exception:
+                    pass
+                self.serial_gripper = None
             self.arm = None
             raise
 
@@ -511,6 +565,7 @@ class SeeedB601RTFollower(Robot):
     def _configure_gripper_force_pos_mode(self) -> None:
         if (
             self.config.control_mode.lower() != "pos_vel"
+            or not self._uses_builtin_gripper
             or not self.config.enabled_gripper_force
             or "gripper" not in self.motor_names
         ):
@@ -556,6 +611,8 @@ class SeeedB601RTFollower(Robot):
         pos_deg, vel_deg, torque = self._read_state_deg(request=False)
 
         obs_dict: dict[str, Any] = {}
+        if self._uses_serial_gripper:
+            obs_dict["gripper.pos"] = self._current_gripper_norm()
         for motor_name in self.motor_names:
             obs_key = self._observation_motor_key(motor_name)
             if motor_name == "gripper":
@@ -610,6 +667,7 @@ class SeeedB601RTFollower(Robot):
     def _force_pos_flags(self) -> tuple[list[bool] | None, list[float] | None]:
         if (
             self.config.control_mode.lower() != "pos_vel"
+            or not self._uses_builtin_gripper
             or not self.config.enabled_gripper_force
             or "gripper" not in self.motor_names
         ):
@@ -687,19 +745,31 @@ class SeeedB601RTFollower(Robot):
             raise ValueError(f"Cartesian action missing keys: {sorted(missing)}")
 
         tcp_action: RobotAction = {key: float(action[key]) for key in TCP_POSE_KEYS}
-        if "gripper" in self.motor_names:
+        if self.config.control_gripper:
             if "gripper.pos" in action:
                 gripper_norm = float(action["gripper.pos"])
             else:
-                current = self.get_current_tcp_pose_quat()
-                gripper_norm = float(current[7])
+                gripper_norm = self._current_gripper_norm()
             tcp_action["gripper.pos"] = max(0.0, min(1.0, gripper_norm))
         return tcp_action
+
+    def _send_serial_gripper_action(self, action: RobotAction) -> dict[str, float]:
+        if not self._uses_serial_gripper:
+            return {}
+        if "gripper.pos" not in action:
+            return {}
+        if self.serial_gripper is None:
+            raise DeviceNotConnectedError("Serial gripper is not connected.")
+
+        gripper_norm = max(0.0, min(1.0, float(action["gripper.pos"])))
+        self.serial_gripper.set_gripper_position(1.0 - gripper_norm)
+        return {"gripper.pos": gripper_norm}
 
     def _send_joint_action(self, action: RobotAction) -> RobotAction:
         if self.arm is None or not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        serial_gripper_action = self._send_serial_gripper_action(action)
         goal_pos = self._complete_goal(action)
         for motor_name, position in list(goal_pos.items()):
             goal_pos[motor_name] = self._clip(position, self.config.joint_limits[motor_name])
@@ -716,7 +786,7 @@ class SeeedB601RTFollower(Robot):
         self._set_rt_target_deg(goal_pos)
         self._last_goal_deg = dict(goal_pos)
         self._maybe_log_motion_debug(goal_pos)
-        return {f"{motor}.pos": val for motor, val in goal_pos.items()}
+        return {**{f"{motor}.pos": val for motor, val in goal_pos.items()}, **serial_gripper_action}
 
     def send_action(self, action: RobotAction) -> RobotAction:
         if self.arm is None or not self.is_connected:
@@ -821,6 +891,11 @@ class SeeedB601RTFollower(Robot):
             self.arm.disconnect(disable=bool(self.config.disable_torque_on_disconnect))
         finally:
             self.arm = None
+            if self.serial_gripper is not None:
+                try:
+                    self.serial_gripper.disconnect()
+                finally:
+                    self.serial_gripper = None
             for cam in self.cameras.values():
                 cam.disconnect()
 

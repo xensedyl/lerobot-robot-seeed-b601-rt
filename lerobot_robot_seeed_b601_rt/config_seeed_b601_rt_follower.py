@@ -7,6 +7,8 @@ from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense import RealSenseCameraConfig
 from lerobot.robots.robot import RobotConfig
 
+from .config_serial_gripper import SerialGripperConfig
+
 
 class ActionMode(str, Enum):
     """Control mode for reBot Arm B601.
@@ -30,10 +32,15 @@ class ControlMode(str, Enum):
     POS_VEL:
         Position velocity control.
     MIT:
-        Motion impedance control.
+        MIT control.
     """
     POS_VEL = "pos_vel"
-    MIT = "motion_impedance"
+    MIT = "mit"
+
+class GripperType(str, Enum):
+    """Gripper type for reBot Arm B601."""
+    SERIAL = "serial" # Serial gripper.
+    REBOTARMB601 = "rebotarm_b601" # reBotArm B601 gripper.
 
 @RobotConfig.register_subclass("seeed_b601_rt_follower")
 @dataclass
@@ -59,9 +66,27 @@ class SeeedB601RTFollowerConfig(RobotConfig):
     control_mode: ControlMode = ControlMode.POS_VEL
 
     # LeRobot-facing action mode. "joint" exposes joint targets; "cartesian" exposes TCP targets.
-    control_gripper: bool = False
+    control_gripper: bool = True
+    gripper_type: GripperType = GripperType.SERIAL
+
+    # Serial gripper parameters.
+    serial_gripper_sn: str = "000033"
+    serial_gripper_port: str = ""
+    serial_gripper_baudrate: int = 115200
+    serial_gripper_serial_timeout: float = 1.0
+    serial_gripper_device_id: int = 1
+    serial_gripper_min_pos: float = 0.0
+    serial_gripper_max_pos: float = 85.0
+    serial_gripper_v_max: float = 80.0
+    serial_gripper_f_max: float = 27.0
+    serial_gripper_init_open: bool = True
+    serial_gripper: SerialGripperConfig | None = field(default=None, init=False)
+
+    # reBotArm B601 gripper force control parameters.
     enabled_gripper_force: bool = True # Whether to enable gripper force control.
     gripper_force_pos_torque_ratio: float = 0.02 # Ratio of gripper force to position torque[0.018 - 1.0]%.
+
+    # Get observation.
     enable_observation_joint_pos: bool = False
     enable_observation_joint_vel: bool = False
     enable_observation_joint_torque: bool = False
@@ -172,3 +197,25 @@ class SeeedB601RTFollowerConfig(RobotConfig):
             # ),
         }
     )
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        if isinstance(self.gripper_type, str):
+            self.gripper_type = GripperType(self.gripper_type)
+
+        if self.gripper_type == GripperType.SERIAL:
+            self.serial_gripper = SerialGripperConfig(
+                sn=str(self.serial_gripper_sn) if self.serial_gripper_sn else None,
+                port=self.serial_gripper_port,
+                baudrate=self.serial_gripper_baudrate,
+                serial_timeout=self.serial_gripper_serial_timeout,
+                device_id=self.serial_gripper_device_id,
+                gripper_min_pos=self.serial_gripper_min_pos,
+                gripper_max_pos=self.serial_gripper_max_pos,
+                gripper_v_max=self.serial_gripper_v_max,
+                gripper_f_max=self.serial_gripper_f_max,
+                init_open=self.serial_gripper_init_open,
+            )
+        else:
+            self.serial_gripper = None

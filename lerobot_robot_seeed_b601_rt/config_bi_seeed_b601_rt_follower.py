@@ -5,7 +5,8 @@ from lerobot.cameras import CameraConfig
 from lerobot.cameras.realsense import RealSenseCameraConfig
 from lerobot.robots.robot import RobotConfig
 
-from .config_seeed_b601_rt_follower import ActionMode, ControlMode
+from .config_serial_gripper import SerialGripperConfig
+from .config_seeed_b601_rt_follower import ActionMode, ControlMode, GripperType
 
 
 @RobotConfig.register_subclass("bi_seeed_b601_rt_follower")
@@ -30,9 +31,33 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
     max_relative_target: float | dict[str, float] | None = None
 
     action_mode: ActionMode = ActionMode.JOINT
-    control_mode: ControlMode = ControlMode.POS_VEL
+    control_mode: ControlMode = ControlMode.POS_VEL # MIT or POS_VEL
 
     control_gripper: bool = True
+    left_gripper_type: GripperType = GripperType.SERIAL
+    right_gripper_type: GripperType = GripperType.SERIAL
+    left_serial_gripper_sn: str = "000033"
+    left_serial_gripper_port: str = ""
+    left_serial_gripper_baudrate: int = 115200
+    left_serial_gripper_serial_timeout: float = 1.0
+    left_serial_gripper_device_id: int = 1
+    left_serial_gripper_min_pos: float = 0.0
+    left_serial_gripper_max_pos: float = 85.0
+    left_serial_gripper_v_max: float = 80.0
+    left_serial_gripper_f_max: float = 27.0
+    left_serial_gripper_init_open: bool = True
+    right_serial_gripper_sn: str = "000034"
+    right_serial_gripper_port: str = ""
+    right_serial_gripper_baudrate: int = 115200
+    right_serial_gripper_serial_timeout: float = 1.0
+    right_serial_gripper_device_id: int = 1
+    right_serial_gripper_min_pos: float = 0.0
+    right_serial_gripper_max_pos: float = 85.0
+    right_serial_gripper_v_max: float = 80.0
+    right_serial_gripper_f_max: float = 27.0
+    right_serial_gripper_init_open: bool = True
+    left_serial_gripper: SerialGripperConfig | None = field(default=None, init=False)
+    right_serial_gripper: SerialGripperConfig | None = field(default=None, init=False)
     enabled_gripper_force: bool = True
     gripper_force_pos_torque_ratio: float = 0.02
     enable_observation_joint_pos: bool = False
@@ -41,12 +66,12 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
     enable_observation_gripper_vel: bool = False
     enable_observation_gripper_torque: bool = False
 
-    rt_rate: float = 150.0
+    rt_rate: float = 100.0
     rt_command_gap_us: int = 0
     left_rt_priority: int = 99
     right_rt_priority: int = 99
     left_rt_cpu: int | None = 3
-    right_rt_cpu: int | None = 4
+    right_rt_cpu: int | None = 3
 
     damiao_tx_debug: int = 0
     debug_motion: bool = False
@@ -139,3 +164,43 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
             # ),
         }
     )
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        if isinstance(self.left_gripper_type, str):
+            self.left_gripper_type = GripperType(self.left_gripper_type)
+        if isinstance(self.right_gripper_type, str):
+            self.right_gripper_type = GripperType(self.right_gripper_type)
+
+        if self.left_gripper_type == GripperType.SERIAL:
+            self.left_serial_gripper = SerialGripperConfig(
+                sn=str(self.left_serial_gripper_sn) if self.left_serial_gripper_sn else None,
+                port=self.left_serial_gripper_port,
+                baudrate=self.left_serial_gripper_baudrate,
+                serial_timeout=self.left_serial_gripper_serial_timeout,
+                device_id=self.left_serial_gripper_device_id,
+                gripper_min_pos=self.left_serial_gripper_min_pos,
+                gripper_max_pos=self.left_serial_gripper_max_pos,
+                gripper_v_max=self.left_serial_gripper_v_max,
+                gripper_f_max=self.left_serial_gripper_f_max,
+                init_open=self.left_serial_gripper_init_open,
+            )
+        else:
+            self.left_serial_gripper = None
+
+        if self.right_gripper_type == GripperType.SERIAL:
+            self.right_serial_gripper = SerialGripperConfig(
+                sn=str(self.right_serial_gripper_sn) if self.right_serial_gripper_sn else None,
+                port=self.right_serial_gripper_port,
+                baudrate=self.right_serial_gripper_baudrate,
+                serial_timeout=self.right_serial_gripper_serial_timeout,
+                device_id=self.right_serial_gripper_device_id,
+                gripper_min_pos=self.right_serial_gripper_min_pos,
+                gripper_max_pos=self.right_serial_gripper_max_pos,
+                gripper_v_max=self.right_serial_gripper_v_max,
+                gripper_f_max=self.right_serial_gripper_f_max,
+                init_open=self.right_serial_gripper_init_open,
+            )
+        else:
+            self.right_serial_gripper = None

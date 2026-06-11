@@ -54,6 +54,59 @@ class BiSeeedB601RTFollower(Robot):
             action_mode=self.config.action_mode,
             control_mode=self.config.control_mode,
             control_gripper=self.config.control_gripper,
+            gripper_type=(
+                self.config.left_gripper_type if side == "left" else self.config.right_gripper_type
+            ),
+            serial_gripper_sn=(
+                self.config.left_serial_gripper_sn
+                if side == "left"
+                else self.config.right_serial_gripper_sn
+            ),
+            serial_gripper_port=(
+                self.config.left_serial_gripper_port
+                if side == "left"
+                else self.config.right_serial_gripper_port
+            ),
+            serial_gripper_baudrate=(
+                self.config.left_serial_gripper_baudrate
+                if side == "left"
+                else self.config.right_serial_gripper_baudrate
+            ),
+            serial_gripper_serial_timeout=(
+                self.config.left_serial_gripper_serial_timeout
+                if side == "left"
+                else self.config.right_serial_gripper_serial_timeout
+            ),
+            serial_gripper_device_id=(
+                self.config.left_serial_gripper_device_id
+                if side == "left"
+                else self.config.right_serial_gripper_device_id
+            ),
+            serial_gripper_min_pos=(
+                self.config.left_serial_gripper_min_pos
+                if side == "left"
+                else self.config.right_serial_gripper_min_pos
+            ),
+            serial_gripper_max_pos=(
+                self.config.left_serial_gripper_max_pos
+                if side == "left"
+                else self.config.right_serial_gripper_max_pos
+            ),
+            serial_gripper_v_max=(
+                self.config.left_serial_gripper_v_max
+                if side == "left"
+                else self.config.right_serial_gripper_v_max
+            ),
+            serial_gripper_f_max=(
+                self.config.left_serial_gripper_f_max
+                if side == "left"
+                else self.config.right_serial_gripper_f_max
+            ),
+            serial_gripper_init_open=(
+                self.config.left_serial_gripper_init_open
+                if side == "left"
+                else self.config.right_serial_gripper_init_open
+            ),
             enabled_gripper_force=self.config.enabled_gripper_force,
             gripper_force_pos_torque_ratio=self.config.gripper_force_pos_torque_ratio,
             enable_observation_joint_pos=self.config.enable_observation_joint_pos,
