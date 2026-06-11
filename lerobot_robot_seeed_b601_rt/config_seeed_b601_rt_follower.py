@@ -30,10 +30,10 @@ class ControlMode(str, Enum):
     POS_VEL:
         Position velocity control.
     MIT:
-        Motion impedance control.
+        MIT control.
     """
     POS_VEL = "pos_vel"
-    MIT = "motion_impedance"
+    MIT = "mit"
 
 @RobotConfig.register_subclass("seeed_b601_rt_follower")
 @dataclass
@@ -59,7 +59,7 @@ class SeeedB601RTFollowerConfig(RobotConfig):
     control_mode: ControlMode = ControlMode.POS_VEL
 
     # LeRobot-facing action mode. "joint" exposes joint targets; "cartesian" exposes TCP targets.
-    control_gripper: bool = False
+    control_gripper: bool = True
     enabled_gripper_force: bool = True # Whether to enable gripper force control.
     gripper_force_pos_torque_ratio: float = 0.02 # Ratio of gripper force to position torque[0.018 - 1.0]%.
     enable_observation_joint_pos: bool = False
