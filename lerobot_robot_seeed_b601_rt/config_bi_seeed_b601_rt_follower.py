@@ -2,9 +2,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from lerobot.cameras import CameraConfig
+from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense import RealSenseCameraConfig
 from lerobot.robots.robot import RobotConfig
 
+from .config_seeed_b601_rt_follower import resolve_opencv_camera_index_or_path
 from .config_serial_gripper import SerialGripperConfig
 from .config_seeed_b601_rt_follower import ActionMode, ControlMode, GripperType
 
@@ -65,6 +67,32 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
     enable_observation_joint_torque: bool = False
     enable_observation_gripper_vel: bool = False
     enable_observation_gripper_torque: bool = False
+
+    # Optional Xense tactile sensors. This uses the external
+    # lerobot_camera_xense package, which targets xensesdk 2.0.0.
+    enable_tactile_sensors: bool = True
+    left_tactile_camera_sn_0: str = "OG001319"
+    left_tactile_camera_sn_1: str = "OG001320"
+    right_tactile_camera_sn_0: str = "OG001321"
+    right_tactile_camera_sn_1: str = "OG001322"
+    # Xense image output for LeRobot camera observations. Supported values:
+    # "rectify" and "difference".
+    tactile_output_types: list[str] = field(default_factory=lambda: ["rectify"])
+    tactile_fps: int = 30
+    tactile_warmup_s: float = 0.05
+    tactile_rectify_size: tuple[int, int] | None = None
+    tactile_raw_size: tuple[int, int] | None = None
+    tactile_disable_infer: bool | None = True
+
+    # Optional wrist RGB cameras, aligned with the bi_flexiv_rizon4_rt config style.
+    enable_wrist_cameras: bool = True
+    left_wrist_camera_sn: str = "XC000033"
+    right_wrist_camera_sn: str = "XC000034"
+    wrist_camera_fourcc: str = "MJPG"
+    wrist_camera_width: int = 640
+    wrist_camera_height: int = 480
+    wrist_camera_fps: int = 30
+    wrist_camera_warmup_s: float = 1.0
 
     rt_rate: float = 100.0
     rt_command_gap_us: int = 0
@@ -179,17 +207,19 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
 
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            # "head": RealSenseCameraConfig(
-            #     serial_number_or_name="021422060263",
-            #     fps=30,
-            #     width=640,
-            #     height=480,
-            #     warmup_s=1.0,
-            # ),
+            "head": RealSenseCameraConfig(
+                serial_number_or_name="021422060263",
+                fps=30,
+                width=640,
+                height=480,
+                warmup_s=1.0,
+            ),
         }
     )
 
     def __post_init__(self):
+        self._configure_wrist_cameras()
+        self._configure_tactile_cameras()
         super().__post_init__()
 
         if isinstance(self.left_gripper_type, str):
@@ -228,3 +258,60 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
             )
         else:
             self.right_serial_gripper = None
+
+    def _configure_wrist_cameras(self) -> None:
+        if not self.enable_wrist_cameras:
+            return
+
+        wrist_cameras = {
+            "left_wrist": self.left_wrist_camera_sn,
+            "right_wrist": self.right_wrist_camera_sn,
+        }
+        for camera_name, index_or_path in wrist_cameras.items():
+            if not index_or_path:
+                continue
+            self.cameras.setdefault(
+                camera_name,
+                OpenCVCameraConfig(
+                    index_or_path=resolve_opencv_camera_index_or_path(index_or_path),
+                    fourcc=self.wrist_camera_fourcc,
+                    width=self.wrist_camera_width,
+                    height=self.wrist_camera_height,
+                    fps=self.wrist_camera_fps,
+                    warmup_s=self.wrist_camera_warmup_s,
+                ),
+            )
+
+    def _configure_tactile_cameras(self) -> None:
+        if not self.enable_tactile_sensors:
+            return
+
+        try:
+            from lerobot_camera_xense import XenseTactileCameraConfig
+        except ImportError as e:
+            raise ImportError(
+                "enable_tactile_sensors=True requires the lerobot_camera_xense package. "
+                "Install it with: pip install -e ./lerobot_camera_xense"
+            ) from e
+
+        tactile_sensors = {
+            "left_tactile_0": self.left_tactile_camera_sn_0,
+            "left_tactile_1": self.left_tactile_camera_sn_1,
+            "right_tactile_0": self.right_tactile_camera_sn_0,
+            "right_tactile_1": self.right_tactile_camera_sn_1,
+        }
+        for camera_name, serial_number in tactile_sensors.items():
+            if not serial_number:
+                continue
+            self.cameras.setdefault(
+                camera_name,
+                XenseTactileCameraConfig(
+                    serial_number=serial_number,
+                    fps=self.tactile_fps,
+                    output_types=self.tactile_output_types,
+                    warmup_s=self.tactile_warmup_s,
+                    rectify_size=self.tactile_rectify_size,
+                    raw_size=self.tactile_raw_size,
+                    disable_infer=self.tactile_disable_infer,
+                ),
+            )

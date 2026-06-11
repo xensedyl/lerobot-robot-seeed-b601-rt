@@ -234,6 +234,49 @@ RealSense 注意事项：
 - 当前环境需要安装 `pyrealsense2`。
 - 如果要用 OpenCV/YUYV，选择 `OpenCVCameraConfig` 并设置 `fourcc="YUYV"`。
 
+Xense 触觉传感器使用外部 `lerobot_camera_xense` 包。这个包适配
+`xensesdk>=2.0.0`，不再使用旧版 xensesdk 1.7.1 的 `CameraSource` API。
+
+先安装：
+
+```bash
+pip install -e .
+```
+
+单臂触觉相机：
+
+```bash
+--robot.enable_tactile_sensors=true \
+--robot.tactile_camera_sn_0=OG001320 \
+--robot.tactile_camera_sn_1=OG001319 \
+--robot.tactile_output_types='["rectify"]'
+```
+
+双臂触觉相机：
+
+```bash
+--robot.enable_tactile_sensors=true \
+--robot.left_tactile_camera_sn_0=OG001320 \
+--robot.left_tactile_camera_sn_1=OG001319 \
+--robot.right_tactile_camera_sn_0=OG001322 \
+--robot.right_tactile_camera_sn_1=OG001321 \
+--robot.tactile_output_types='["rectify"]'
+```
+
+当前支持的 Xense 输出是 `rectify` 和 `difference`。
+
+双臂腕部相机：
+
+```bash
+--robot.enable_wrist_cameras=true \
+--robot.left_wrist_camera_sn=XC000001 \
+--robot.right_wrist_camera_sn=XC000002 \
+--robot.wrist_camera_fourcc=MJPG \
+--robot.wrist_camera_width=640 \
+--robot.wrist_camera_height=480 \
+--robot.wrist_camera_fps=30
+```
+
 ## 常用运行参数
 
 ```bash

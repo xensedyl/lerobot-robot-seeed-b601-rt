@@ -40,6 +40,27 @@ TCP_POSE_KEYS = (
 )
 
 
+def _camera_feature_shape(config: Any) -> tuple:
+    output_types = getattr(config, "output_types", None)
+    if output_types is None:
+        return (config.height, config.width, 3)
+
+    if len(output_types) != 1:
+        raise ValueError(
+            "B601 camera observation features require one output type per camera key. "
+            "Configure multiple Xense outputs as separate camera entries."
+        )
+
+    output_type = output_types[0]
+    output_value = getattr(output_type, "value", str(output_type)).lower()
+    if output_value not in {"rectify", "difference"}:
+        raise ValueError(
+            "B601 Xense tactile cameras support only image outputs as LeRobot camera observations: "
+            f"'rectify' or 'difference'. Got: {output_value!r}."
+        )
+    return (config.height, config.width, 3)
+
+
 class SeeedB601RTFollower(Robot):
     """Seeed B601 follower backed by rebotarm_control_rt's Rust actuator loop."""
 
@@ -178,10 +199,7 @@ class SeeedB601RTFollower(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
-            for cam in self.cameras
-        }
+        return {cam: _camera_feature_shape(self.config.cameras[cam]) for cam in self.cameras}
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:

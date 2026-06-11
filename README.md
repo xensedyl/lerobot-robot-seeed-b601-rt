@@ -241,6 +241,50 @@ RealSense notes:
 - OpenCV/YUYV can be used if you choose an `OpenCVCameraConfig` and set
   `fourcc="YUYV"`.
 
+Xense tactile sensors use the external `lerobot_camera_xense` package. This
+package targets `xensesdk>=2.0.0`; it does not use the old xensesdk 1.7.1
+`CameraSource` API.
+
+Install it first:
+
+```bash
+pip install -e .
+```
+
+Single-arm tactile cameras:
+
+```bash
+--robot.enable_tactile_sensors=true \
+--robot.tactile_camera_sn_0=OG001320 \
+--robot.tactile_camera_sn_1=OG001319 \
+--robot.tactile_output_types='["rectify"]'
+```
+
+Dual-arm tactile cameras:
+
+```bash
+--robot.enable_tactile_sensors=true \
+--robot.left_tactile_camera_sn_0=OG001320 \
+--robot.left_tactile_camera_sn_1=OG001319 \
+--robot.right_tactile_camera_sn_0=OG001322 \
+--robot.right_tactile_camera_sn_1=OG001321 \
+--robot.tactile_output_types='["rectify"]'
+```
+
+Supported Xense outputs are `rectify` and `difference`.
+
+Dual-arm wrist cameras:
+
+```bash
+--robot.enable_wrist_cameras=true \
+--robot.left_wrist_camera_sn=XC000001 \
+--robot.right_wrist_camera_sn=XC000002 \
+--robot.wrist_camera_fourcc=MJPG \
+--robot.wrist_camera_width=640 \
+--robot.wrist_camera_height=480 \
+--robot.wrist_camera_fps=30
+```
+
 ## Useful Runtime Options
 
 ```bash

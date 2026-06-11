@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from enum import Enum
+import glob
+import os
 
 from lerobot.cameras import CameraConfig
 from lerobot.cameras.opencv import OpenCVCameraConfig
@@ -8,6 +10,35 @@ from lerobot.cameras.realsense import RealSenseCameraConfig
 from lerobot.robots.robot import RobotConfig
 
 from .config_serial_gripper import SerialGripperConfig
+
+
+def resolve_opencv_camera_index_or_path(index_or_path: str | int | Path) -> str | int | Path:
+    """Resolve a USB camera serial/name to a stable OpenCV device path when possible."""
+
+    if isinstance(index_or_path, int):
+        return index_or_path
+
+    value = str(index_or_path)
+    if not value:
+        return index_or_path
+
+    if value.isdigit():
+        return int(value)
+
+    path = Path(value)
+    if path.exists() or value.startswith("/dev/video"):
+        return path
+
+    for candidate in sorted(glob.glob(f"/dev/v4l/by-id/*{value}*")):
+        if "index0" not in candidate:
+            continue
+        return Path(os.path.realpath(candidate))
+
+    matches = sorted(glob.glob(f"/dev/v4l/by-id/*{value}*"))
+    if matches:
+        return Path(os.path.realpath(matches[0]))
+
+    return index_or_path
 
 
 class ActionMode(str, Enum):
@@ -92,6 +123,30 @@ class SeeedB601RTFollowerConfig(RobotConfig):
     enable_observation_joint_torque: bool = False
     enable_observation_gripper_vel: bool = False
     enable_observation_gripper_torque: bool = False
+
+    # Optional Xense tactile sensors. This uses the external
+    # lerobot_camera_xense package, which targets xensesdk 2.0.0.
+    auto_configure_cameras: bool = True
+    enable_tactile_sensors: bool = True
+    tactile_camera_sn_0: str = "OG001319"
+    tactile_camera_sn_1: str = "OG001320"
+    # Xense image output for LeRobot camera observations. Supported values:
+    # "rectify" and "difference".
+    tactile_output_types: list[str] = field(default_factory=lambda: ["rectify"])
+    tactile_fps: int = 30
+    tactile_warmup_s: float = 0.05
+    tactile_rectify_size: tuple[int, int] | None = None
+    tactile_raw_size: tuple[int, int] | None = None
+    tactile_disable_infer: bool | None = True
+
+    # Optional wrist RGB camera.
+    enable_wrist_cameras: bool = True
+    wrist_camera_sn: str = "XC000033"
+    wrist_camera_fourcc: str = "MJPG"
+    wrist_camera_width: int = 640
+    wrist_camera_height: int = 480
+    wrist_camera_fps: int = 30
+    wrist_camera_warmup_s: float = 1.0
 
     # RT control loop parameters.
     rt_rate: float = 150.0
@@ -193,13 +248,13 @@ class SeeedB601RTFollowerConfig(RobotConfig):
     # Cameras for the follower robot.
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            # "head": RealSenseCameraConfig(
-            #     serial_number_or_name="021422060263",
-            #     fps=30,
-            #     width=640,
-            #     height=480,
-            #     warmup_s=1.0,
-            # ),
+            "head": RealSenseCameraConfig(
+                serial_number_or_name="021422060263",
+                fps=30,
+                width=640,
+                height=480,
+                warmup_s=1.0,
+            ),
             # "head": OpenCVCameraConfig(
             #     index_or_path="/dev/video6",
             #     fourcc="YUYV",
@@ -212,6 +267,9 @@ class SeeedB601RTFollowerConfig(RobotConfig):
     )
 
     def __post_init__(self):
+        if self.auto_configure_cameras:
+            self._configure_wrist_cameras()
+            self._configure_tactile_cameras()
         super().__post_init__()
 
         if isinstance(self.gripper_type, str):
@@ -232,3 +290,51 @@ class SeeedB601RTFollowerConfig(RobotConfig):
             )
         else:
             self.serial_gripper = None
+
+    def _configure_wrist_cameras(self) -> None:
+        if not self.enable_wrist_cameras or not self.wrist_camera_sn:
+            return
+
+        self.cameras.setdefault(
+            "wrist",
+            OpenCVCameraConfig(
+                index_or_path=resolve_opencv_camera_index_or_path(self.wrist_camera_sn),
+                fourcc=self.wrist_camera_fourcc,
+                width=self.wrist_camera_width,
+                height=self.wrist_camera_height,
+                fps=self.wrist_camera_fps,
+                warmup_s=self.wrist_camera_warmup_s,
+            ),
+        )
+
+    def _configure_tactile_cameras(self) -> None:
+        if not self.enable_tactile_sensors:
+            return
+
+        try:
+            from lerobot_camera_xense import XenseTactileCameraConfig
+        except ImportError as e:
+            raise ImportError(
+                "enable_tactile_sensors=True requires the lerobot_camera_xense package. "
+                "Install it with: pip install -e ./lerobot_camera_xense"
+            ) from e
+
+        tactile_sensors = {
+            "tactile_0": self.tactile_camera_sn_0,
+            "tactile_1": self.tactile_camera_sn_1,
+        }
+        for camera_name, serial_number in tactile_sensors.items():
+            if not serial_number:
+                continue
+            self.cameras.setdefault(
+                camera_name,
+                XenseTactileCameraConfig(
+                    serial_number=serial_number,
+                    fps=self.tactile_fps,
+                    output_types=self.tactile_output_types,
+                    warmup_s=self.tactile_warmup_s,
+                    rectify_size=self.tactile_rectify_size,
+                    raw_size=self.tactile_raw_size,
+                    disable_infer=self.tactile_disable_infer,
+                ),
+            )

@@ -13,7 +13,7 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 
 from .config_bi_seeed_b601_rt_follower import BiSeeedB601RTFollowerConfig
 from .config_seeed_b601_rt_follower import SeeedB601RTFollowerConfig
-from .seeed_b601_rt_follower import SeeedB601RTFollower
+from .seeed_b601_rt_follower import SeeedB601RTFollower, _camera_feature_shape
 
 
 logger = logging.getLogger(__name__)
@@ -136,6 +136,9 @@ class BiSeeedB601RTFollower(Robot):
             ),
             return_to_initial_vlim_deg_s=self.config.return_to_initial_vlim_deg_s,
             joint_limits=self.config.joint_limits,
+            auto_configure_cameras=False,
+            enable_tactile_sensors=False,
+            enable_wrist_cameras=False,
             cameras={},
         )
 
@@ -156,10 +159,7 @@ class BiSeeedB601RTFollower(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        camera_features = {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
-            for cam in self.cameras
-        }
+        camera_features = {cam: _camera_feature_shape(self.config.cameras[cam]) for cam in self.cameras}
         return {
             **self._prefix_dict("left", self.left.observation_features),
             **self._prefix_dict("right", self.right.observation_features),
