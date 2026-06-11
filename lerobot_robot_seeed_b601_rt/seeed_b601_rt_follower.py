@@ -809,6 +809,20 @@ class SeeedB601RTFollower(Robot):
         self.serial_gripper.set_gripper_position(1.0 - gripper_norm)
         return {"gripper.pos": gripper_norm}
 
+    def _command_serial_gripper_initial_position(self) -> None:
+        if not self._uses_serial_gripper or self.serial_gripper is None:
+            return
+
+        target = 1.0 if self.config.serial_gripper_init_open else 0.0
+        try:
+            self.serial_gripper.set_gripper_position(target)
+            logger.info(
+                "Serial gripper reset command sent (%s).",
+                "open" if self.config.serial_gripper_init_open else "closed",
+            )
+        except Exception:
+            logger.debug("Failed to command serial gripper initial position.", exc_info=True)
+
     def _send_joint_action(self, action: RobotAction) -> RobotAction:
         if self.arm is None or not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
@@ -878,6 +892,8 @@ class SeeedB601RTFollower(Robot):
         )
 
     def _return_to_initial_position(self) -> None:
+        self._command_serial_gripper_initial_position()
+
         if self.arm is None or not self._initial_positions_deg:
             return
 
