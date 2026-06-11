@@ -77,6 +77,7 @@ class SeeedB601RTFollower(Robot):
         required_maps = {
             "motor_models": set(self.config.motor_models),
             "joint_limits": set(self.config.joint_limits),
+            "mit_gains": set(self.config.mit_gains),
             "pos_vel_gains": set(self.config.pos_vel_gains),
         }
         for field_name, keys in required_maps.items():
@@ -84,6 +85,12 @@ class SeeedB601RTFollower(Robot):
             if missing:
                 raise ValueError(f"{field_name} missing keys: {sorted(missing)}")
         for motor_name in ids:
+            mit_gains = self.config.mit_gains[motor_name]
+            if len(mit_gains) != 2:
+                raise ValueError(f"mit_gains[{motor_name!r}] must contain (kp, kd).")
+            if any(float(value) < 0.0 for value in mit_gains):
+                raise ValueError(f"mit_gains[{motor_name!r}] values must be >= 0.")
+
             gains = self.config.pos_vel_gains[motor_name]
             if len(gains) != 4:
                 raise ValueError(
@@ -413,6 +420,7 @@ class SeeedB601RTFollower(Robot):
         vlim = self._velocity_limits_rad()
         for idx, motor_name in enumerate(self.motor_names):
             motor_id, feedback_id = self.config.motor_can_ids[motor_name]
+            kp, kd = self.config.mit_gains[motor_name]
             vel_kp, vel_ki, pos_kp, pos_ki = self.config.pos_vel_gains[motor_name]
             lines.extend(
                 [
@@ -421,6 +429,9 @@ class SeeedB601RTFollower(Robot):
                     f"    feedback_id: 0x{int(feedback_id):02X}",
                     f"    model: \"{self.config.motor_models[motor_name]}\"",
                     f"    vendor: \"{self._default_vendor(motor_name)}\"",
+                    "    MIT:",
+                    f"      kp: {float(kp)}",
+                    f"      kd: {float(kd)}",
                     "    POS_VEL:",
                     f"      vel_kp: {float(vel_kp)}",
                     f"      vel_ki: {float(vel_ki)}",
@@ -496,7 +507,8 @@ class SeeedB601RTFollower(Robot):
             self.arm.mode_pos_vel(vlim=self._velocity_limits_rad())
             self._configure_gripper_force_pos_mode()
         else:
-            self.arm.mode_mit()
+            kp, kd = self._mit_gains_lists()
+            self.arm.mode_mit(kp=kp, kd=kd)
 
         self._initial_positions_deg = dict(current_positions_deg)
         self._apply_initial_gripper_pose(self._initial_positions_deg)
@@ -680,11 +692,22 @@ class SeeedB601RTFollower(Robot):
         ]
         return force_pos, torque_ratio
 
+    def _mit_gains_lists(self) -> tuple[list[float], list[float]]:
+        kp = [float(self.config.mit_gains[motor_name][0]) for motor_name in self.motor_names]
+        kd = [float(self.config.mit_gains[motor_name][1]) for motor_name in self.motor_names]
+        return kp, kd
+
     def _set_rt_target_deg(self, goal_pos: dict[str, float], vlim_rad: list[float] | None = None) -> None:
         target_rad = [math.radians(goal_pos[motor_name]) for motor_name in self.motor_names]
         force_pos, force_pos_torque_ratio = self._force_pos_flags()
+        mit_kp = None
+        mit_kd = None
+        if self.config.control_mode.lower() == "mit":
+            mit_kp, mit_kd = self._mit_gains_lists()
         self.arm.set_targets(
             pos=target_rad,
+            kp=mit_kp,
+            kd=mit_kd,
             vlim=vlim_rad if vlim_rad is not None else self._velocity_limits_rad(),
             force_pos=force_pos,
             force_pos_torque_ratio=force_pos_torque_ratio,
@@ -719,6 +742,9 @@ class SeeedB601RTFollower(Robot):
                 raise ValueError("return_to_initial_vlim_deg_s values must be > 0.")
             values.append(min(math.radians(deg_s), normal_vlim[idx]))
         return values
+
+    def _return_to_initial_vlim_deg(self) -> list[float]:
+        return [math.degrees(value) for value in self._return_to_initial_vlim_rad()]
 
     def _complete_goal(self, action: RobotAction) -> dict[str, float]:
         goal_pos = dict(self._last_goal_deg)
@@ -847,6 +873,10 @@ class SeeedB601RTFollower(Robot):
             name: self._clip(self._initial_positions_deg[name], self.config.joint_limits[name])
             for name in self.motor_names
         }
+        if self.config.control_mode.lower() == "mit":
+            self._return_to_initial_position_mit(current, target)
+            return
+
         return_started_s = time.monotonic()
         return_vlim_rad = self._return_to_initial_vlim_rad()
 
@@ -876,6 +906,53 @@ class SeeedB601RTFollower(Robot):
                 logger.info("Returned to initial position before disconnect (max error %.2f deg).", max_error)
                 return
             time.sleep(0.02)
+
+        logger.info("Return-to-initial timeout before disconnect.")
+
+    def _return_to_initial_position_mit(self, current: dict[str, float], target: dict[str, float]) -> None:
+        step_dt_s = 0.02
+        tolerance = 0.1
+        return_vlim_deg = self._return_to_initial_vlim_deg()
+        commanded = {
+            name: self._last_goal_deg.get(name, current.get(name, target[name]))
+            for name in self.motor_names
+        }
+        expected_s = max(
+            abs(target[name] - commanded[name]) / return_vlim_deg[idx]
+            for idx, name in enumerate(self.motor_names)
+        )
+        deadline = time.monotonic() + expected_s + step_dt_s
+
+        while time.monotonic() < deadline:
+            done = True
+            for idx, name in enumerate(self.motor_names):
+                error = target[name] - commanded[name]
+                max_step = return_vlim_deg[idx] * step_dt_s
+                if abs(error) > max_step:
+                    commanded[name] += math.copysign(max_step, error)
+                    done = False
+                else:
+                    commanded[name] = target[name]
+
+            try:
+                self._set_rt_target_deg(commanded)
+                self._last_goal_deg = dict(commanded)
+            except Exception:
+                logger.debug("Failed to command MIT reset target before disconnect.", exc_info=True)
+                return
+
+            if done:
+                try:
+                    current, _, _ = self._read_state_deg(request=False)
+                    max_error = max(abs(current[name] - target[name]) for name in self.motor_names)
+                except Exception:
+                    logger.debug("Failed to read state after MIT reset target.", exc_info=True)
+                    max_error = 0.0
+                if max_error <= tolerance:
+                    logger.info("Returned to initial position before disconnect (max error %.2f deg).", max_error)
+                    return
+
+            time.sleep(step_dt_s)
 
         logger.info("Return-to-initial timeout before disconnect.")
 

@@ -105,6 +105,30 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
     pos_vel_velocity: float | list[float] = field(
         default_factory=lambda: [150, 150, 150, 150, 150, 150, 300]
     )
+    # MIT gains used by rebotarm_control_rt in ControlMode.MIT.
+    # Tuple order: (kp, kd).
+    left_mit_gains: dict[str, tuple[float, float]] = field(
+        default_factory=lambda: {
+            "shoulder_pan": (120.0, 8.0),
+            "shoulder_lift": (120.0, 8.0),
+            "elbow_flex": (120.0, 8.0),
+            "wrist_flex": (18.0, 2.0),
+            "wrist_yaw": (18.0, 2.0),
+            "wrist_roll": (18.0, 2.0),
+            "gripper": (8.0, 1.0),
+        }
+    )
+    right_mit_gains: dict[str, tuple[float, float]] = field(
+        default_factory=lambda: {
+            "shoulder_pan": (120.0, 8.0),
+            "shoulder_lift": (120.0, 8.0),
+            "elbow_flex": (120.0, 8.0),
+            "wrist_flex": (18.0, 2.0),
+            "wrist_yaw": (18.0, 2.0),
+            "wrist_roll": (18.0, 2.0),
+            "gripper": (8.0, 1.0),
+        }
+    )
     # Damiao POS_VEL register gains written before starting RT loops.
     # Tuple order: (vel_kp, vel_ki, pos_kp, pos_ki).
     left_pos_vel_gains: dict[str, tuple[float, float, float, float]] = field(
