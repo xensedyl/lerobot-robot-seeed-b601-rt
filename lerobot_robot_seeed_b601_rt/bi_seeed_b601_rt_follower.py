@@ -211,8 +211,22 @@ class BiSeeedB601RTFollower(Robot):
                 logger.info("No cameras configured; skipping camera connect.")
             else:
                 logger.info("Connecting %d camera(s): %s...", len(self.cameras), ", ".join(self.cameras))
+                def connect_camera(camera_name, camera):  # noqa: ANN001
+                    camera_start = time.perf_counter()
+                    logger.info("Connecting camera %s (%s)...", camera_name, camera)
+                    camera.connect()
+                    logger.info(
+                        "Camera %s (%s) connected in %.3fs.",
+                        camera_name,
+                        camera,
+                        time.perf_counter() - camera_start,
+                    )
+
                 with ThreadPoolExecutor(max_workers=len(self.cameras)) as executor:
-                    camera_futures = [executor.submit(cam.connect) for cam in self.cameras.values()]
+                    camera_futures = [
+                        executor.submit(connect_camera, camera_name, cam)
+                        for camera_name, cam in self.cameras.items()
+                    ]
                     for future in camera_futures:
                         future.result()
                 logger.info("All cameras connected.")
