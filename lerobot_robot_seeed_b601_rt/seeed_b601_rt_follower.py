@@ -2,6 +2,7 @@ import logging
 import math
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from functools import cached_property
 from pathlib import Path
 from typing import Any
@@ -492,8 +493,10 @@ class SeeedB601RTFollower(Robot):
                 logger.info("No cameras configured; skipping camera connect.")
             else:
                 logger.info("Connecting %d camera(s): %s...", len(self.cameras), ", ".join(self.cameras))
-                for cam in self.cameras.values():
-                    cam.connect()
+                with ThreadPoolExecutor(max_workers=len(self.cameras)) as executor:
+                    camera_futures = [executor.submit(cam.connect) for cam in self.cameras.values()]
+                    for future in camera_futures:
+                        future.result()
                 logger.info("All cameras connected.")
             self.configure()
         except Exception:
