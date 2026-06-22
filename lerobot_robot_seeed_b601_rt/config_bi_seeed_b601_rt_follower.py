@@ -83,6 +83,7 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
     tactile_rectify_size: tuple[int, int] | None = None
     tactile_raw_size: tuple[int, int] | None = None
     tactile_disable_infer: bool | None = True
+    tactile_process_backend: bool = True
 
     # Optional wrist RGB cameras, aligned with the bi_flexiv_rizon4_rt config style.
     enable_wrist_cameras: bool = True
@@ -313,5 +314,6 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
                     rectify_size=self.tactile_rectify_size,
                     raw_size=self.tactile_raw_size,
                     disable_infer=self.tactile_disable_infer,
+                    process_backend=self.tactile_process_backend,
                 ),
             )
