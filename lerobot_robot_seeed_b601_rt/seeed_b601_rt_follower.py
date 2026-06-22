@@ -1011,6 +1011,10 @@ class SeeedB601RTFollower(Robot):
                 finally:
                     self.serial_gripper = None
             for cam in self.cameras.values():
-                cam.disconnect()
+                try:
+                    if getattr(cam, "is_connected", False):
+                        cam.disconnect()
+                except DeviceNotConnectedError:
+                    pass
 
         logger.info("%s disconnected.", self)

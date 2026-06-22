@@ -314,19 +314,29 @@ class BiSeeedB601RTFollower(Robot):
                 logger.debug("Failed to disconnect camera during cleanup.", exc_info=True)
 
     def disconnect(self) -> None:
-        if not self.is_connected:
+        has_connected_children = (
+            self.left.is_connected
+            or self.right.is_connected
+            or any(getattr(cam, "is_connected", False) for cam in self.cameras.values())
+        )
+        if not has_connected_children:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         try:
             with ThreadPoolExecutor(max_workers=2) as executor:
-                futures = [
-                    executor.submit(self.left.disconnect),
-                    executor.submit(self.right.disconnect),
-                ]
+                futures = []
+                if self.left.is_connected:
+                    futures.append(executor.submit(self.left.disconnect))
+                if self.right.is_connected:
+                    futures.append(executor.submit(self.right.disconnect))
                 for future in futures:
                     future.result()
         finally:
             for cam in self.cameras.values():
-                cam.disconnect()
+                try:
+                    if getattr(cam, "is_connected", False):
+                        cam.disconnect()
+                except DeviceNotConnectedError:
+                    pass
 
         logger.info("%s disconnected.", self)
