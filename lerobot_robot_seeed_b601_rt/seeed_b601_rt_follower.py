@@ -172,8 +172,6 @@ class SeeedB601RTFollower(Robot):
     @property
     def _observation_motors_ft(self) -> dict[str, type]:
         features: dict[str, type] = {}
-        if self._uses_serial_gripper:
-            features["gripper.pos"] = float
         for motor in self.motor_names:
             obs_key = self._observation_motor_key(motor)
             if motor == "gripper":
@@ -184,12 +182,14 @@ class SeeedB601RTFollower(Robot):
                     features[f"{obs_key}.torque"] = float
                 continue
 
-            if self.config.enable_observation_joint_pos:
+            if self.config.action_mode.lower() == "joint" or self.config.enable_observation_joint_pos:
                 features[f"{obs_key}.pos"] = float
             if self.config.enable_observation_joint_vel:
                 features[f"{obs_key}.vel"] = float
             if self.config.enable_observation_joint_torque:
                 features[f"{obs_key}.torque"] = float
+        if self._uses_serial_gripper:
+            features["gripper.pos"] = float
         return features
 
     @property
@@ -562,7 +562,7 @@ class SeeedB601RTFollower(Robot):
             int(self.config.rt_command_gap_us),
         )
 
-    def _read_positions_deg_blocking(self, attempts: int = 60) -> dict[str, float]:
+    def _read_positions_deg_blocking(self, attempts: int = 300) -> dict[str, float]:
         if self.arm is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -572,7 +572,22 @@ class SeeedB601RTFollower(Robot):
                 "running the B601 RT follower safely."
             )
 
-        positions = np.asarray(self.arm.get_positions_blocking(attempts=attempts), dtype=float)
+        try:
+            positions = np.asarray(self.arm.get_positions_blocking(attempts=attempts), dtype=float)
+        except RuntimeError as exc:
+            try:
+                snapshot = np.asarray(self.arm.get_positions(request=True), dtype=float)
+                logger.error(
+                    "%s failed to read a complete initial joint feedback set from %s after %s attempts. "
+                    "Snapshot with missing-feedback joints filled as 0 deg: %s",
+                    self,
+                    self.config.port,
+                    attempts,
+                    [round(math.degrees(float(value)), 3) for value in snapshot],
+                )
+            except Exception:
+                logger.exception("%s failed to read diagnostic joint snapshot from %s.", self, self.config.port)
+            raise exc
 
         if positions.size != len(self.motor_names):
             raise RuntimeError(
@@ -658,8 +673,6 @@ class SeeedB601RTFollower(Robot):
         pos_deg, vel_deg, torque = self._read_state_deg(request=False)
 
         obs_dict: dict[str, Any] = {}
-        if self._uses_serial_gripper:
-            obs_dict["gripper.pos"] = self._current_gripper_norm()
         for motor_name in self.motor_names:
             obs_key = self._observation_motor_key(motor_name)
             if motor_name == "gripper":
@@ -670,12 +683,14 @@ class SeeedB601RTFollower(Robot):
                     obs_dict[f"{obs_key}.torque"] = torque[motor_name]
                 continue
 
-            if self.config.enable_observation_joint_pos:
+            if self.config.action_mode.lower() == "joint" or self.config.enable_observation_joint_pos:
                 obs_dict[f"{obs_key}.pos"] = pos_deg[motor_name]
             if self.config.enable_observation_joint_vel:
                 obs_dict[f"{obs_key}.vel"] = vel_deg[motor_name]
             if self.config.enable_observation_joint_torque:
                 obs_dict[f"{obs_key}.torque"] = torque[motor_name]
+        if self._uses_serial_gripper:
+            obs_dict["gripper.pos"] = self._current_gripper_norm()
 
         if self.config.action_mode.lower() == "cartesian":
             tcp_pose = self._tcp_pose_matrix_from_positions(pos_deg)

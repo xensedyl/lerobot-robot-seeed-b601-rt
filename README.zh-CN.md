@@ -344,10 +344,13 @@ action 中使用 shoulder_pan.pos, shoulder_lift.pos, ...
 gripper.pos 是归一化值：0=张开，1=闭合
 ```
 
-可选 observation 字段：
+关节模式下会默认输出 `joint_1..joint_6` 位置观测，不需要额外参数。
+`--robot.enable_observation_joint_pos=true` 只用于笛卡尔模式：当 action 使用 TCP 控制时，
+如果还想额外保存关节位置观测，再打开这个参数。
+
+可选速度、力矩 observation 字段：
 
 ```bash
---robot.enable_observation_joint_pos=true
 --robot.enable_observation_joint_vel=true
 --robot.enable_observation_joint_torque=true
 --robot.enable_observation_gripper_vel=true

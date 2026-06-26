@@ -354,10 +354,13 @@ actions use shoulder_pan.pos, shoulder_lift.pos, ...
 gripper.pos is normalized: 0=open, 1=closed
 ```
 
-Optional observation fields:
+Joint mode publishes `joint_1..joint_6` position observations by default and does not need
+an extra option. `--robot.enable_observation_joint_pos=true` is reserved for Cartesian mode:
+when actions are TCP targets, enable it only if you also want joint position observations.
+
+Optional velocity and torque observation fields:
 
 ```bash
---robot.enable_observation_joint_pos=true
 --robot.enable_observation_joint_vel=true
 --robot.enable_observation_joint_torque=true
 --robot.enable_observation_gripper_vel=true

@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from lerobot_robot_seeed_b601_rt import BiSeeedB601RTFollowerConfig, SeeedB601RTFollowerConfig
+from lerobot_robot_seeed_b601_rt.config_seeed_b601_rt_follower import GripperType
 from lerobot_robot_seeed_b601_rt.bi_seeed_b601_rt_follower import BiSeeedB601RTFollower
 from lerobot_robot_seeed_b601_rt.seeed_b601_rt_follower import SeeedB601RTFollower
 from lerobot.robots.utils import make_robot_from_config
@@ -20,6 +21,7 @@ def test_config_registers_and_generates_rt_yaml():
 
     assert robot.name == "seeed_b601_rt_follower"
     assert "shoulder_pan.pos" in robot.action_features
+    assert "joint_1.pos" in robot.observation_features
     assert "gripper.pos" in robot.observation_features
 
     yaml = robot._render_rt_arm_yaml()
@@ -60,7 +62,9 @@ def test_bi_config_registers_and_prefixes_features():
     assert isinstance(robot, BiSeeedB601RTFollower)
     assert robot.name == "bi_seeed_b601_rt_follower"
     assert cfg.left_rt_cpu == 3
-    assert cfg.right_rt_cpu == 4
+    assert cfg.right_rt_cpu == 3
+    assert robot.left.config.rt_cpu == cfg.left_rt_cpu
+    assert robot.right.config.rt_cpu == cfg.right_rt_cpu
     assert robot.left.config.pos_vel_gains["shoulder_lift"] == (0.013, 0.004, 200.0, 10.0)
     assert robot.right.config.pos_vel_gains["shoulder_lift"] == (0.02, 0.005, 180.0, 1.0)
     assert "left_tcp.x" in robot.action_features
@@ -73,10 +77,11 @@ def test_bi_config_registers_and_prefixes_features():
     assert "right_gripper.pos" in robot.observation_features
 
 
-def test_observation_joint_features_are_independently_configurable():
+def test_joint_mode_always_observes_joint_positions():
     cfg = SeeedB601RTFollowerConfig(
         port="/dev/ttyACM0",
-        enable_observation_joint_pos=True,
+        action_mode="joint",
+        enable_observation_joint_pos=False,
         enable_observation_joint_vel=False,
         enable_observation_joint_torque=False,
     )
@@ -93,9 +98,34 @@ def test_observation_joint_features_are_independently_configurable():
     assert "joint_7.pos" not in robot.observation_features
 
 
+def test_cartesian_mode_uses_joint_position_observation_flag():
+    cfg = SeeedB601RTFollowerConfig(
+        port="/dev/ttyACM0",
+        action_mode="cartesian",
+        enable_observation_joint_pos=False,
+    )
+    robot = SeeedB601RTFollower(cfg)
+
+    assert "joint_1.pos" not in robot.observation_features
+    assert "tcp.x" in robot.observation_features
+    assert "gripper.pos" in robot.observation_features
+
+    cfg = SeeedB601RTFollowerConfig(
+        port="/dev/ttyACM0",
+        action_mode="cartesian",
+        enable_observation_joint_pos=True,
+    )
+    robot = SeeedB601RTFollower(cfg)
+
+    assert "joint_1.pos" in robot.observation_features
+    assert "tcp.x" in robot.observation_features
+
+
 def test_gripper_observation_is_controlled_separately_from_joint_observation():
     cfg = SeeedB601RTFollowerConfig(
         port="/dev/ttyACM0",
+        action_mode="cartesian",
+        gripper_type=GripperType.REBOTARMB601,
         enable_observation_joint_pos=False,
         enable_observation_joint_vel=False,
         enable_observation_joint_torque=False,
@@ -145,7 +175,9 @@ def test_gripper_observation_position_is_normalized():
 
 
 def test_return_to_initial_vlim_supports_dict_scalar_and_list():
-    dict_robot = SeeedB601RTFollower(SeeedB601RTFollowerConfig(port="/dev/ttyACM0"))
+    dict_robot = SeeedB601RTFollower(
+        SeeedB601RTFollowerConfig(port="/dev/ttyACM0", gripper_type=GripperType.REBOTARMB601)
+    )
     assert dict_robot._return_to_initial_vlim_rad()[0] == pytest.approx(math.radians(15.0))
     assert dict_robot._return_to_initial_vlim_rad()[-1] == pytest.approx(math.radians(150.0))
 
