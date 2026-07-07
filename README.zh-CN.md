@@ -43,9 +43,20 @@ sudo chmod 666 /dev/ttyACM* /dev/ttyUSB*
 
 长期使用建议写 `udev` 规则，不建议每次手动 `chmod`。
 
+灵足 / RobStride 通过 PCAN-USB 接入时，先按 1 Mbps 启动 SocketCAN：
+
+```bash
+sudo modprobe peak_usb
+ip -br link
+
+sudo ip link set can0 down 2>/dev/null || true
+sudo ip link set can0 type can bitrate 1000000 restart-ms 100
+sudo ip link set can0 up
+```
+
 ## 单臂遥操作
 
-用 leader arm 做关节遥操作：
+用 leader arm 做关节遥操作damiao：
 
 ```bash
 lerobot-teleoperate \
@@ -58,10 +69,41 @@ lerobot-teleoperate \
   --teleop.port=/dev/ttyUSB0 \
   --teleop.id=rebot_arm_102_leader \
   --teleop.joint_directions='{"shoulder_pan":-1,"shoulder_lift":-1,"elbow_flex":1,"wrist_flex":1,"wrist_yaw":1,"wrist_roll":-1,"gripper":-4}' \
-  --fps=100
+  --fps=100 \
+  --display_data=true
 ```
 
+用 leader arm 做关节遥操作 RobStride：
+```bash
+lerobot-teleoperate \
+  --robot.type=seeed_b601_rt_follower \
+  --robot.port=can0 \
+  --robot.id=follower1 \
+  --robot.can_adapter=robstride \
+  --robot.control_gripper=false \
+  --teleop.type=rebot_arm_102_leader \
+  --teleop.port=/dev/ttyUSB0 \
+  --teleop.id=rebot_arm_102_leader \
+  --fps=100 \
+  --display_data=true
+```
+
+灵足 / RobStride 真机使用同一个 `robot.type`，端口用 CAN 口，并把 adapter 改成
+RobStride：
+
+```bash
+--robot.port=can0
+--robot.can_adapter=robstride
+```
+
+adapter 开关还会自动把生成的 RT 配置切到 RobStride CAN ID、RobStride 电机型号/增益、
+灵足 URDF，以及非 RT/TacCap follower 同一套 RS 从手关节方向映射。如果不传
+`--robot.port`，`can_adapter=robstride` 默认使用 `can0`；只有 CAN 口不是 `can0` 时，
+才传 `--robot.port=can1`。
+
 Pico4 笛卡尔遥操作通常通过 `lerobot-teleoperator-pico4` 运行：
+
+Pico4 笛卡尔遥操作 damiao:
 
 ```bash
 lerobot-teleoperate-pico4 \
@@ -77,7 +119,44 @@ lerobot-teleoperate-pico4 \
   --display_data=true
 ```
 
+Pico4 笛卡尔遥操作 RobStride:
+
+```bash
+lerobot-teleoperate-pico4 \
+  --robot.type=seeed_b601_rt_follower \
+  --robot.port=can0 \
+  --robot.id=follower1 \
+  --robot.can_adapter=robstride \
+  --robot.action_mode=cartesian \
+  --robot.control_gripper=true \
+  --teleop.type=pico4 \
+  --teleop.id=pico4 \
+  --fps=100 \
+  --display_data=true
+```
+
 ## 双臂遥操作
+
+双臂 leader arm 做关节遥操作：
+
+```bash
+lerobot-teleoperate \
+  --robot.type=bi_seeed_b601_rt_follower \
+  --robot.id=bi_follower \
+  --robot.left_port=can0 \
+  --robot.right_port=/dev/ttyACM1 \
+  --robot.left_can_adapter=robstride \
+  --robot.right_can_adapter=damiao \
+  --robot.control_gripper=false \
+  --robot.left_rt_cpu=3 \
+  --robot.right_rt_cpu=4 \
+  --teleop.type=bi_rebot_arm_102_leader \
+  --teleop.id=bi_rebot_arm_102_leader \
+  --teleop.left_port=/dev/ttyUSB0 \
+  --teleop.right_port=/dev/ttyUSB1 \
+  --fps=100 \
+  --display_data=true
+```
 
 双臂 Pico4 笛卡尔遥操作：
 
@@ -247,6 +326,9 @@ RealSense 注意事项：
 --robot.debug_motion=true
 --robot.debug_motion_interval_s=1.0
 ```
+
+如果 display data 里 action 有值但机械臂不动，打开 `debug_motion` 看映射后的目标、
+当前关节位置和 RT loop overrun 计数。
 
 复位/断开时回初始位的速度限制：
 

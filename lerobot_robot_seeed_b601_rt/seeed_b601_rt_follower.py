@@ -128,6 +128,14 @@ class SeeedB601RTFollower(Robot):
             and not 0.0 <= self.config.gripper_force_pos_torque_ratio <= 1.0
         ):
             raise ValueError("gripper_force_pos_torque_ratio must be in [0, 1].")
+        missing_joint_directions = ids - set(self.config.joint_directions)
+        if missing_joint_directions:
+            raise ValueError(
+                f"joint_directions missing keys: {sorted(missing_joint_directions)}"
+            )
+        for motor_name, direction in self.config.joint_directions.items():
+            if float(direction) == 0.0:
+                raise ValueError(f"joint_directions[{motor_name!r}] must be non-zero.")
     @property
     def _action_motors_ft(self) -> dict[str, type]:
         features = {f"{motor}.pos": float for motor in self.motor_names}
@@ -220,6 +228,9 @@ class SeeedB601RTFollower(Robot):
         if self.config.can_adapter == "robstride":
             return "robstride"
         return "damiao"
+
+    def _uses_robstride_motors(self) -> bool:
+        return any(self._default_vendor(motor_name) == "robstride" for motor_name in self.motor_names)
 
     def _velocity_limits_rad(self) -> list[float]:
         velocity = self.config.pos_vel_velocity
@@ -414,9 +425,12 @@ class SeeedB601RTFollower(Robot):
             "name: reBotArmB601RT",
             f"channel: {self.config.port}",
             f"rate: {float(self.config.rt_rate)}",
-            "",
-            "joints:",
         ]
+        if self.config.rt_urdf_path is not None:
+            lines.append(f"urdf_path: \"{self.config.rt_urdf_path}\"")
+        if self.config.rt_end_effector_frame is not None:
+            lines.append(f"end_effector_frame: \"{self.config.rt_end_effector_frame}\"")
+        lines.extend(["", "joints:"])
         vlim = self._velocity_limits_rad()
         for idx, motor_name in enumerate(self.motor_names):
             motor_id, feedback_id = self.config.motor_can_ids[motor_name]
@@ -498,6 +512,7 @@ class SeeedB601RTFollower(Robot):
         if self.arm is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        self._configure_robstride_feedback()
         self.arm.enable()
         current_positions_deg = self._read_positions_deg_blocking()
         self._clear_possible_mit_torque(current_positions_deg)
@@ -526,6 +541,20 @@ class SeeedB601RTFollower(Robot):
             float(self.config.rt_rate),
             int(self.config.rt_command_gap_us),
         )
+
+    def _configure_robstride_feedback(self) -> None:
+        if self.arm is None or not self._uses_robstride_motors():
+            return
+        if not hasattr(self.arm, "robstride_set_active_report"):
+            raise RuntimeError(
+                "rebotarm_control_rt is missing robstride_set_active_report(); rebuild/install "
+                "a RobStride-capable version before using --robot.can_adapter=robstride."
+            )
+        for motor_name in self.motor_names:
+            if self._default_vendor(motor_name) != "robstride":
+                continue
+            self.arm.robstride_set_active_report(motor_name, True)
+        logger.info("Enabled RobStride active feedback reporting for %d motor(s).", len(self.motor_names))
 
     def _read_positions_deg_blocking(self, attempts: int = 60) -> dict[str, float]:
         if self.arm is None:
@@ -746,7 +775,7 @@ class SeeedB601RTFollower(Robot):
     def _return_to_initial_vlim_deg(self) -> list[float]:
         return [math.degrees(value) for value in self._return_to_initial_vlim_rad()]
 
-    def _complete_goal(self, action: RobotAction) -> dict[str, float]:
+    def _complete_goal(self, action: RobotAction, *, apply_joint_directions: bool) -> dict[str, float]:
         goal_pos = dict(self._last_goal_deg)
         if not goal_pos and self._last_positions_deg:
             goal_pos = dict(self._last_positions_deg)
@@ -756,7 +785,12 @@ class SeeedB601RTFollower(Robot):
                 continue
             motor_name = key.removesuffix(".pos")
             if motor_name in self.motor_names:
-                goal_pos[motor_name] = float(val)
+                direction = (
+                    float(self.config.joint_directions[motor_name])
+                    if apply_joint_directions
+                    else 1.0
+                )
+                goal_pos[motor_name] = float(val) * direction
 
         if "wrist_yaw" in self.motor_names and "wrist_yaw" not in goal_pos:
             goal_pos["wrist_yaw"] = 0.0
@@ -791,12 +825,17 @@ class SeeedB601RTFollower(Robot):
         self.serial_gripper.set_gripper_position(1.0 - gripper_norm)
         return {"gripper.pos": gripper_norm}
 
-    def _send_joint_action(self, action: RobotAction) -> RobotAction:
+    def _send_joint_action(
+        self,
+        action: RobotAction,
+        *,
+        apply_joint_directions: bool = True,
+    ) -> RobotAction:
         if self.arm is None or not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         serial_gripper_action = self._send_serial_gripper_action(action)
-        goal_pos = self._complete_goal(action)
+        goal_pos = self._complete_goal(action, apply_joint_directions=apply_joint_directions)
         for motor_name, position in list(goal_pos.items()):
             goal_pos[motor_name] = self._clip(position, self.config.joint_limits[motor_name])
 
@@ -823,7 +862,7 @@ class SeeedB601RTFollower(Robot):
         if action_mode == "cartesian" or is_tcp_action:
             tcp_action = self._complete_tcp_action(action)
             joint_action = self.tcp_action_to_joint_action(tcp_action)
-            self._send_joint_action(joint_action)
+            self._send_joint_action(joint_action, apply_joint_directions=False)
             return tcp_action
 
         return self._send_joint_action(action)
@@ -849,7 +888,7 @@ class SeeedB601RTFollower(Robot):
         }
         max_delta_name = max(self.motor_names, key=lambda name: abs(deltas[name]))
         logger.info(
-            "%s motion debug: max_delta=%s %.2f deg | target=%s | current=%s | rt_overruns(send/read)=%s/%s",
+            "%s motion debug: max_delta=%s %.2f deg | target=%s | current=%s | rt_overruns(send/read)=%s/%s | rt_send_errors=%s",
             self.id or self.config.port,
             max_delta_name,
             deltas[max_delta_name],
@@ -857,6 +896,7 @@ class SeeedB601RTFollower(Robot):
             {name: round(self._last_positions_deg.get(name, 0.0), 2) for name in self.motor_names},
             getattr(self.arm, "rt_send_overruns", getattr(self.arm, "rt_overruns", None)),
             getattr(self.arm, "rt_read_overruns", None),
+            getattr(self.arm, "rt_send_errors", None),
         )
 
     def _return_to_initial_position(self) -> None:

@@ -39,6 +39,87 @@ def test_config_registers_and_generates_rt_yaml():
     assert cfg.disable_torque_on_disconnect is False
 
 
+def test_robstride_adapter_switches_hardware_defaults():
+    cfg = SeeedB601RTFollowerConfig(
+        can_adapter="robstride",
+        id="rs_test",
+        calibration_dir=Path("/tmp/lerobot-b601-rt-rs-test"),
+    )
+    robot = make_robot_from_config(cfg)
+
+    assert robot.name == "seeed_b601_rt_follower"
+    assert cfg.port == "can0"
+    assert cfg.motor_vendor == "robstride"
+    assert cfg.motor_can_ids["shoulder_pan"] == (0x01, 0xFD)
+    assert cfg.motor_models["shoulder_pan"] == "rs-06"
+    assert cfg.motor_models["wrist_roll"] == "rs-00"
+    assert cfg.kinematic_urdf_path == "urdf/00-arm-rs_asm-v3/urdf/00-arm-rs_asm-v3.urdf"
+    assert cfg.rt_urdf_path == "urdf/00-arm-rs_asm-v3/urdf/00-arm-rs_asm-v3.urdf"
+    assert cfg.rt_end_effector_frame == "gripper_end"
+    assert cfg.disable_torque_on_disconnect is True
+    assert cfg.mit_gains["shoulder_lift"] == (150.0, 10.0)
+    assert cfg.pos_vel_gains["shoulder_lift"] == (14.0, 0.1, 16.0, 0.0)
+    assert cfg.joint_limits["shoulder_lift"] == (-0.0, 170.0)
+    assert cfg.joint_directions["shoulder_pan"] == -1.0
+    assert cfg.joint_directions["shoulder_lift"] == -1.0
+    assert cfg.joint_directions["elbow_flex"] == -1.0
+    assert cfg.joint_directions["wrist_yaw"] == -1.0
+    assert cfg.joint_directions["wrist_roll"] == -1.0
+
+    yaml = robot._render_rt_arm_yaml()
+    assert "channel: can0" in yaml
+    assert "urdf_path: \"urdf/00-arm-rs_asm-v3/urdf/00-arm-rs_asm-v3.urdf\"" in yaml
+    assert "end_effector_frame: \"gripper_end\"" in yaml
+    assert "feedback_id: 0xFD" in yaml
+    assert "model: \"rs-06\"" in yaml
+    assert "vendor: \"robstride\"" in yaml
+    assert "vel_kp: 14.0" in yaml
+    assert "pos_ki: 0.0" in yaml
+
+    explicit_default_port_cfg = SeeedB601RTFollowerConfig(
+        can_adapter="robstride",
+        port="/dev/ttyACM0",
+    )
+    assert explicit_default_port_cfg.port == "can0"
+
+
+def test_robstride_adapter_preserves_explicit_overrides():
+    cfg = SeeedB601RTFollowerConfig(
+        can_adapter="robstride",
+        port="can1",
+        motor_models={"shoulder_pan": "custom"},
+    )
+
+    assert cfg.port == "can1"
+    assert cfg.motor_models == {"shoulder_pan": "custom"}
+
+
+def test_joint_action_applies_follower_joint_directions_before_clipping():
+    cfg = SeeedB601RTFollowerConfig(
+        can_adapter="robstride",
+        control_gripper=False,
+        cameras={},
+    )
+    robot = SeeedB601RTFollower(cfg)
+    robot._last_goal_deg = {motor: 0.0 for motor in robot.motor_names}
+    robot._last_positions_deg = dict(robot._last_goal_deg)
+
+    goal = robot._complete_goal(
+        {
+            "shoulder_lift.pos": 12.0,
+            "elbow_flex.pos": -34.0,
+            "wrist_yaw.pos": -9.0,
+            "wrist_roll.pos": 7.0,
+        },
+        apply_joint_directions=True,
+    )
+
+    assert goal["shoulder_lift"] == -12.0
+    assert goal["elbow_flex"] == 34.0
+    assert goal["wrist_yaw"] == 9.0
+    assert goal["wrist_roll"] == -7.0
+
+
 def test_bi_config_registers_and_prefixes_features():
     cfg = BiSeeedB601RTFollowerConfig(
         id="bi_test",
@@ -71,6 +152,39 @@ def test_bi_config_registers_and_prefixes_features():
     assert "right_tcp.x" in robot.observation_features
     assert "left_gripper.pos" in robot.observation_features
     assert "right_gripper.pos" in robot.observation_features
+
+
+def test_bi_config_allows_mixed_robstride_and_damiao_adapters():
+    cfg = BiSeeedB601RTFollowerConfig(
+        id="bi_mixed_test",
+        calibration_dir=Path("/tmp/lerobot-bi-b601-rt-mixed-test"),
+        left_port="can0",
+        right_port="/dev/ttyACM4",
+        left_can_adapter="robstride",
+        right_can_adapter="damiao",
+        control_gripper=False,
+        cameras={},
+    )
+    robot = make_robot_from_config(cfg)
+
+    assert cfg.can_adapter == "damiao"
+    assert cfg.left_can_adapter == "robstride"
+    assert cfg.right_can_adapter == "damiao"
+    assert robot.left.config.port == "can0"
+    assert robot.left.config.can_adapter == "robstride"
+    assert robot.left.config.motor_vendor == "robstride"
+    assert robot.left.config.motor_can_ids["shoulder_pan"] == (0x01, 0xFD)
+    assert robot.left.config.kinematic_urdf_path == "urdf/00-arm-rs_asm-v3/urdf/00-arm-rs_asm-v3.urdf"
+    assert robot.left.config.disable_torque_on_disconnect is True
+    assert robot.left.config.joint_directions["shoulder_pan"] == -1.0
+    assert robot.left.config.control_gripper is False
+    assert robot.right.config.port == "/dev/ttyACM4"
+    assert robot.right.config.can_adapter == "damiao"
+    assert robot.right.config.motor_vendor is None
+    assert robot.right.config.motor_can_ids["shoulder_pan"] == (0x01, 0x11)
+    assert robot.right.config.kinematic_urdf_path == "lerobot_robot_seeed_b601_rt/tool_calibration.urdf"
+    assert robot.right.config.disable_torque_on_disconnect is False
+    assert robot.right.config.control_gripper is False
 
 
 def test_observation_joint_features_are_independently_configurable():

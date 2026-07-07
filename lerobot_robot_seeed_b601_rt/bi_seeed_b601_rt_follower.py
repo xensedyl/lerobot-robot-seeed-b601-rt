@@ -40,7 +40,9 @@ class BiSeeedB601RTFollower(Robot):
             id=self.config.left_id if side == "left" else self.config.right_id,
             calibration_dir=self.calibration_dir,
             port=self.config.left_port if side == "left" else self.config.right_port,
-            can_adapter=self.config.can_adapter,
+            can_adapter=(
+                self.config.left_can_adapter if side == "left" else self.config.right_can_adapter
+            ),
             arm_cfg_path=(
                 self.config.left_arm_cfg_path if side == "left" else self.config.right_arm_cfg_path
             ),

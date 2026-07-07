@@ -1,19 +1,19 @@
-# Seeed reBot Arm B601 RT Follower for LeRobot
+# Seeed reBot Arm B601 RT LeRobot Follower
 
-This package registers LeRobot follower robots for the Seeed reBot Arm B601
-using `rebotarm_control_rt` as the low-level motor backend.
+This package registers RT followers for the Seeed reBot Arm B601 in LeRobot.
+Low-level motor control is handled by `rebotarm_control_rt`.
 
-Compared with `lerobot-robot-seeed-b601`, this RT variant keeps a LeRobot-style
-robot interface while the motor commands are sent by the Rust RT loop in
-`rebotarm_control_rt`. It supports:
+Compared with `lerobot-robot-seeed-b601`, this RT version keeps the
+LeRobot-style robot interface, while motor commands are sent by the Rust RT loop
+in `rebotarm_control_rt`. Current support includes:
 
 - single-arm follower: `seeed_b601_rt_follower`
 - dual-arm follower: `bi_seeed_b601_rt_follower`
-- joint-space and Cartesian TCP action modes
+- joint-space control and Cartesian TCP control
 - Damiao / SocketCAN / RobStride adapter selection
-- optional force-position mode for the built-in gripper motor
-- optional external serial Xense gripper
-- per-arm calibrated TCP URDF for Cartesian teleoperation
+- built-in gripper motor force-position mode
+- external Xense serial gripper
+- per-arm TCP calibration URDF configuration
 
 ## Install
 
@@ -24,8 +24,8 @@ cd /home/xense/rebot_lerobot/lerobot-robot-seeed-b601-rt
 pip install -e .
 ```
 
-If you changed `rebotarm_control_rt` path resolution, URDFs, or native bindings,
-reinstall/rebuild `rebotarm_control_rt` before running this plugin.
+If you changed path resolution, URDFs, or native bindings in
+`rebotarm_control_rt`, rebuild/reinstall `rebotarm_control_rt` first.
 
 ## Device Ports
 
@@ -36,17 +36,28 @@ ls -l /dev/ttyACM* /dev/ttyUSB*
 ls -l /dev/serial/by-id/
 ```
 
-For quick local testing you can grant access manually:
+For quick testing you can grant access manually:
 
 ```bash
 sudo chmod 666 /dev/ttyACM* /dev/ttyUSB*
 ```
 
-For long-term use, prefer a proper `udev` rule instead of manual `chmod`.
+For long-term use, prefer a `udev` rule instead of running `chmod` each time.
 
-## Single Arm
+For LingZu / RobStride through PCAN-USB, bring up SocketCAN at 1 Mbps first:
 
-Leader-arm joint teleoperation:
+```bash
+sudo modprobe peak_usb
+ip -br link
+
+sudo ip link set can0 down 2>/dev/null || true
+sudo ip link set can0 type can bitrate 1000000 restart-ms 100
+sudo ip link set can0 up
+```
+
+## Single-Arm Teleoperation
+
+Use a leader arm for Damiao joint teleoperation:
 
 ```bash
 lerobot-teleoperate \
@@ -59,10 +70,44 @@ lerobot-teleoperate \
   --teleop.port=/dev/ttyUSB0 \
   --teleop.id=rebot_arm_102_leader \
   --teleop.joint_directions='{"shoulder_pan":-1,"shoulder_lift":-1,"elbow_flex":1,"wrist_flex":1,"wrist_yaw":1,"wrist_roll":-1,"gripper":-4}' \
-  --fps=100
+  --fps=100 \
+  --display_data=true
 ```
 
-Pico4 Cartesian teleoperation is usually run through `lerobot-teleoperator-pico4`:
+Use a leader arm for RobStride joint teleoperation:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=seeed_b601_rt_follower \
+  --robot.port=can0 \
+  --robot.id=follower1 \
+  --robot.can_adapter=robstride \
+  --robot.control_gripper=false \
+  --teleop.type=rebot_arm_102_leader \
+  --teleop.port=/dev/ttyUSB0 \
+  --teleop.id=rebot_arm_102_leader \
+  --fps=100 \
+  --display_data=true
+```
+
+LingZu / RobStride hardware uses the same `robot.type`; use the CAN interface
+as the port and switch the adapter to RobStride:
+
+```bash
+--robot.port=can0
+--robot.can_adapter=robstride
+```
+
+The adapter switch also changes the generated RT config to RobStride CAN IDs,
+RobStride motor models/gains, the LingZu URDF, and the same RS follower-side
+joint direction mapping used by the non-RT/TacCap follower. If `--robot.port`
+is not passed, `can_adapter=robstride` defaults to `can0`; only pass
+`--robot.port=can1` when the CAN interface is not `can0`.
+
+Pico4 Cartesian teleoperation is usually run through
+`lerobot-teleoperator-pico4`.
+
+Pico4 Cartesian teleoperation with Damiao:
 
 ```bash
 lerobot-teleoperate-pico4 \
@@ -78,7 +123,44 @@ lerobot-teleoperate-pico4 \
   --display_data=true
 ```
 
-## Dual Arm
+Pico4 Cartesian teleoperation with RobStride:
+
+```bash
+lerobot-teleoperate-pico4 \
+  --robot.type=seeed_b601_rt_follower \
+  --robot.port=can0 \
+  --robot.id=follower1 \
+  --robot.can_adapter=robstride \
+  --robot.action_mode=cartesian \
+  --robot.control_gripper=true \
+  --teleop.type=pico4 \
+  --teleop.id=pico4 \
+  --fps=100 \
+  --display_data=true
+```
+
+## Dual-Arm Teleoperation
+
+Dual leader-arm joint teleoperation:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=bi_seeed_b601_rt_follower \
+  --robot.id=bi_follower \
+  --robot.left_port=can0 \
+  --robot.right_port=/dev/ttyACM1 \
+  --robot.left_can_adapter=robstride \
+  --robot.right_can_adapter=damiao \
+  --robot.control_gripper=false \
+  --robot.left_rt_cpu=3 \
+  --robot.right_rt_cpu=4 \
+  --teleop.type=bi_rebot_arm_102_leader \
+  --teleop.id=bi_rebot_arm_102_leader \
+  --teleop.left_port=/dev/ttyUSB0 \
+  --teleop.right_port=/dev/ttyUSB1 \
+  --fps=100 \
+  --display_data=true
+```
 
 Dual-arm Pico4 Cartesian teleoperation:
 
@@ -97,7 +179,8 @@ lerobot-teleoperate-pico4 \
   --display_data=true
 ```
 
-Dual-arm settings are split where hardware can differ:
+Hardware parameters that may differ between arms are split into left/right
+settings:
 
 ```bash
 --robot.left_rt_cpu=3
@@ -110,7 +193,8 @@ Dual-arm settings are split where hardware can differ:
 
 ## Cartesian TCP URDF
 
-Cartesian mode uses `rebotarm_control_rt.kinematics.load_robot_model(...)`.
+Cartesian mode loads the kinematic model with
+`rebotarm_control_rt.kinematics.load_robot_model(...)`.
 
 Single-arm default:
 
@@ -125,8 +209,8 @@ Dual-arm defaults:
 --robot.right_kinematic_urdf_path=lerobot_robot_seeed_b601_rt/tool_calibration.urdf
 ```
 
-With the current `rebotarm_control_rt` resolver, relative URDF names are resolved
-by basename in the SDK calibration directory. For example:
+The current `rebotarm_control_rt` path resolver searches by basename in the
+SDK `calibration/` directory. These forms also work:
 
 ```bash
 --robot.kinematic_urdf_path=tool_calibration.urdf
@@ -134,21 +218,19 @@ by basename in the SDK calibration directory. For example:
 --robot.right_kinematic_urdf_path=right_tool_calibration.urdf
 ```
 
-If you want to use the original built-in SDK URDF, set the path to `None` in
-the config object or change the default in the config file. Command-line parsers
-usually pass strings, so using `None` from CLI depends on the active LeRobot
-parser behavior.
+To use the SDK's original built-in URDF, set the path to `None` in the config
+object or change the config default. Whether CLI `None` becomes a real `None`
+depends on the current LeRobot parser behavior.
 
 ## Built-In Gripper Motor
 
-Enable the B601 CAN gripper motor with:
+Enable the B601 CAN gripper motor:
 
 ```bash
 --robot.control_gripper=true
 ```
 
-In `pos_vel` mode the plugin can switch the gripper to Damiao force-position
-mode:
+In `pos_vel` mode, the gripper can be switched to Damiao force-position mode:
 
 ```bash
 --robot.gripper_type=rebotarm_b601
@@ -156,23 +238,23 @@ mode:
 --robot.gripper_force_pos_torque_ratio=0.02
 ```
 
-The LeRobot convention exposed by this plugin is:
+The gripper convention exposed to LeRobot is:
 
 ```text
 gripper.pos = 0.0  # open
 gripper.pos = 1.0  # closed
 ```
 
-The built-in B601 motor limits are mapped through `joint_limits["gripper"]`.
-`enabled_gripper_force` and `gripper_force_pos_torque_ratio` only apply when
-`gripper_type=rebotarm_b601`.
+The built-in B601 gripper motor maps through `joint_limits["gripper"]` to motor
+angle. `enabled_gripper_force` and `gripper_force_pos_torque_ratio` only apply
+when `gripper_type=rebotarm_b601`.
 
 ## External Serial Gripper
 
-This plugin can use `serial_gripper.py` as an external Xense serial gripper.
-When enabled, `gripper.pos` stays in the LeRobot convention (`0=open`,
-`1=closed`), but commands are sent to the serial gripper instead of the B601
-CAN gripper motor.
+This plugin can control an external Xense serial gripper through
+`serial_gripper.py`. When enabled, `gripper.pos` still keeps the LeRobot/B601
+convention (`0=open`, `1=closed`), but commands are sent to the serial gripper
+instead of the B601 CAN gripper motor.
 
 Single arm:
 
@@ -182,7 +264,7 @@ Single arm:
 --robot.serial_gripper_port=/dev/ttyUSB1
 ```
 
-Or select the serial gripper by board serial number:
+The board SN can also be used for automatic port discovery:
 
 ```bash
 --robot.control_gripper=true \
@@ -190,11 +272,12 @@ Or select the serial gripper by board serial number:
 --robot.serial_gripper_sn="'000033'"
 ```
 
-The SN is a string. If it starts with `0`, either put it in
-`config_seeed_b601_rt_follower.py` or use the extra inner quotes above;
-otherwise the command-line parser may turn `000033` into the number `27`.
+The SN is a string. If it starts with `0`, put it in the default values in
+`config_seeed_b601_rt_follower.py`; if passing it on the command line, use the
+extra inner quotes above. Otherwise the parser may treat `000033` as a number
+and parse it as `27`.
 
-Useful serial gripper options:
+Common serial gripper options:
 
 ```bash
 --robot.serial_gripper_baudrate=115200
@@ -218,18 +301,19 @@ Dual arm:
 --robot.right_serial_gripper_port=/dev/ttyUSB1
 ```
 
-When serial gripper mode is active, the RT arm config excludes the CAN gripper
-motor, but LeRobot action and observation still expose `gripper.pos`. The
-built-in gripper force-position settings are ignored in this mode.
+When serial gripper mode is enabled, the RT arm motor list does not include the
+CAN gripper motor, but LeRobot action and observation still expose
+`gripper.pos`. Built-in gripper force-position parameters are not used in this
+mode.
 
 ## Cameras
 
-Camera configs live in the robot config dataclasses. The code currently keeps
-example RealSense and OpenCV/YUYV configs commented out. Enable the camera you
-need in `config_seeed_b601_rt_follower.py` or pass camera configs through your
-LeRobot setup.
+Camera configs live in the robot config dataclass. The code keeps example
+RealSense and OpenCV/YUYV configs commented out by default. Enable the camera
+you need in `config_seeed_b601_rt_follower.py`, or pass camera configs through
+your LeRobot configuration.
 
-For display:
+Display data:
 
 ```bash
 --display_data=true
@@ -238,8 +322,7 @@ For display:
 RealSense notes:
 
 - `pyrealsense2` must be installed in the active environment.
-- OpenCV/YUYV can be used if you choose an `OpenCVCameraConfig` and set
-  `fourcc="YUYV"`.
+- To use OpenCV/YUYV, choose `OpenCVCameraConfig` and set `fourcc="YUYV"`.
 
 ## Useful Runtime Options
 
@@ -255,13 +338,17 @@ RealSense notes:
 --robot.debug_motion_interval_s=1.0
 ```
 
-Return-to-initial speed on reset/disconnect:
+If display data shows non-zero actions but the arm does not move, enable
+`debug_motion` to inspect the mapped target, current joint positions, and RT
+loop overrun counters.
+
+Return-to-initial speed limit for reset/disconnect:
 
 ```bash
 --robot.return_to_initial_vlim_deg_s='{"shoulder_pan":15,"shoulder_lift":15,"elbow_flex":15,"wrist_flex":15,"wrist_yaw":15,"wrist_roll":15,"gripper":150}'
 ```
 
-For dual arms, CPU and priority can be split:
+Dual arms can set CPU and priority separately:
 
 ```bash
 --robot.left_rt_cpu=3
@@ -272,29 +359,29 @@ For dual arms, CPU and priority can be split:
 
 ## Generated RT Config
 
-By default the plugin generates a `rebotarm_control_rt` YAML config under the
-LeRobot calibration cache. You can override it:
+By default, the plugin generates a `rebotarm_control_rt` YAML config under the
+LeRobot calibration cache. You can also specify your own YAML:
 
 ```bash
 --robot.arm_cfg_path=/path/to/arm.yaml
 ```
 
-For dual arm:
+Dual arm:
 
 ```bash
 --robot.left_arm_cfg_path=/path/to/left_arm.yaml
 --robot.right_arm_cfg_path=/path/to/right_arm.yaml
 ```
 
-The YAML joint order must match the controlled motor order. With the built-in
-CAN gripper enabled:
+The joint order in the YAML must match the controlled motor order. When using
+the built-in CAN gripper:
 
 ```text
 shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_yaw, wrist_roll, gripper
 ```
 
-With external serial gripper enabled, the CAN gripper motor is not part of the
-RT arm target list:
+When using an external serial gripper, the CAN gripper motor is no longer part
+of the RT arm target list:
 
 ```text
 shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_yaw, wrist_roll
@@ -302,10 +389,10 @@ shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_yaw, wrist_roll
 
 ## Observations and Actions
 
-Joint action mode:
+Joint mode:
 
 ```text
-joint_1..joint_6 map to shoulder_pan..wrist_roll in observations
+joint_1..joint_6 in observation map to shoulder_pan..wrist_roll
 actions use shoulder_pan.pos, shoulder_lift.pos, ...
 gripper.pos is normalized: 0=open, 1=closed
 ```
@@ -320,16 +407,16 @@ Optional observation fields:
 --robot.enable_observation_gripper_torque=true
 ```
 
-Cartesian action mode:
+Cartesian mode:
 
 ```text
 tcp.x, tcp.y, tcp.z
 tcp.r1 ... tcp.r6  # 6D rotation
-gripper.pos        # if control_gripper=true
+gripper.pos        # present when control_gripper=true
 ```
 
 The robot converts TCP targets to joint targets through the configured URDF and
-IK solver before sending RT joint targets.
+IK solver, then sends RT joint targets.
 
 ## Debugging
 
@@ -344,24 +431,26 @@ Watch `rt_overruns(send/read)`:
 - `send`: RT command thread missed a deadline.
 - `read`: optional RT feedback request thread missed a deadline.
 
-For Damiao serial TX logs:
+Damiao serial TX logs:
 
 ```bash
 --robot.damiao_tx_debug=1
 ```
 
-If a serial port is busy, check for stopped Python jobs or stale processes:
+If a serial port is busy, first check whether there are stopped but not exited
+Python processes:
 
 ```bash
 jobs
 ps aux | grep python
 ```
 
-Then unplug/replug only if the device remains busy after the process exits.
+Only unplug/replug the device if the port remains busy after the process has
+actually exited.
 
 ## Calibration Notes
 
-This plugin does not run a LeRobot calibration flow. Motor zeroing and motor
+This plugin does not run the LeRobot calibration flow. Motor zeroing and motor
 modes are handled by `rebotarm_control_rt` / firmware. TCP calibration is done
-by generating a calibrated URDF in `rebotarm_control_rt` and passing that URDF
-through `kinematic_urdf_path`.
+by generating a URDF with the new TCP in `rebotarm_control_rt`, then passing
+that URDF to this plugin through `kinematic_urdf_path`.

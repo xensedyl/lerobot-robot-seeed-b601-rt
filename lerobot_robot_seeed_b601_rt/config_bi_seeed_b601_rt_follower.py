@@ -16,7 +16,10 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
 
     left_port: str = "/dev/ttyACM0"
     right_port: str = "/dev/ttyACM1"
+    # Backward-compatible default for both arms. Override left/right when mixing motor stacks.
     can_adapter: str = "damiao"
+    left_can_adapter: str | None = None
+    right_can_adapter: str | None = None
 
     left_id: str = "left_follower"
     right_id: str = "right_follower"
@@ -71,7 +74,7 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
     left_rt_priority: int = 99
     right_rt_priority: int = 99
     left_rt_cpu: int | None = 3
-    right_rt_cpu: int | None = 3
+    right_rt_cpu: int | None = 4
 
     damiao_tx_debug: int = 0
     debug_motion: bool = False
@@ -191,6 +194,17 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
 
     def __post_init__(self):
         super().__post_init__()
+
+        self.can_adapter = self.can_adapter.lower()
+        self.left_can_adapter = (self.left_can_adapter or self.can_adapter).lower()
+        self.right_can_adapter = (self.right_can_adapter or self.can_adapter).lower()
+        allowed_adapters = {"damiao", "socketcan", "robstride"}
+        for field_name in ("can_adapter", "left_can_adapter", "right_can_adapter"):
+            value = getattr(self, field_name)
+            if value not in allowed_adapters:
+                raise ValueError(
+                    f"{field_name} must be one of {sorted(allowed_adapters)}, got {value!r}."
+                )
 
         if isinstance(self.left_gripper_type, str):
             self.left_gripper_type = GripperType(self.left_gripper_type)
