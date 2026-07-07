@@ -58,8 +58,9 @@ def test_robstride_adapter_switches_hardware_defaults():
     assert cfg.rt_end_effector_frame == "gripper_end"
     assert cfg.disable_torque_on_disconnect is True
     assert cfg.mit_gains["shoulder_lift"] == (150.0, 10.0)
-    assert cfg.pos_vel_gains["shoulder_lift"] == (14.0, 0.1, 16.0, 0.0)
+    assert cfg.pos_vel_gains["shoulder_lift"] == (13.5, 0.1, 17.0, 0.0)
     assert cfg.joint_limits["shoulder_lift"] == (-0.0, 170.0)
+    assert cfg.pos_vel_velocity == pytest.approx([1, 0.4, 0.4, 1, 1, 1, 1])
     assert cfg.joint_directions["shoulder_pan"] == -1.0
     assert cfg.joint_directions["shoulder_lift"] == -1.0
     assert cfg.joint_directions["elbow_flex"] == -1.0
@@ -73,7 +74,9 @@ def test_robstride_adapter_switches_hardware_defaults():
     assert "feedback_id: 0xFD" in yaml
     assert "model: \"rs-06\"" in yaml
     assert "vendor: \"robstride\"" in yaml
-    assert "vel_kp: 14.0" in yaml
+    assert "vel_kp: 13.5" in yaml
+    assert "pos_kp: 17.0" in yaml
+    assert "vlim: 0.4" in yaml
     assert "pos_ki: 0.0" in yaml
 
     explicit_default_port_cfg = SeeedB601RTFollowerConfig(

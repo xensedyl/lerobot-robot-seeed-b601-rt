@@ -103,8 +103,8 @@ def _dm_pos_vel_velocity() -> list[float]:
 
 
 def _rs_pos_vel_velocity() -> list[float]:
-    # rebotarm_control_rt arm_rs.yaml uses 10 rad/s for the arm and 5 rad/s for the gripper.
-    return [572.957795, 572.957795, 572.957795, 572.957795, 572.957795, 572.957795, 286.478898]
+    # RobStride vel_max / limit_spd in rad/s.
+    return [1, 0.4, 0.4, 1, 1, 1, 1]
 
 
 def _dm_mit_gains() -> dict[str, tuple[float, float]]:
@@ -144,14 +144,16 @@ def _dm_pos_vel_gains() -> dict[str, tuple[float, float, float, float]]:
 
 
 def _rs_pos_vel_gains() -> dict[str, tuple[float, float, float, float]]:
+    # Tuple order: (spd_kp, spd_ki, loc_kp, loc_ki).
+    # RobStride does not expose loc_ki in this path, so pos_ki stays 0.0.
     return {
         "shoulder_pan": (12.0, 0.1, 13.0, 0.0),
-        "shoulder_lift": (14.0, 0.1, 16.0, 0.0),
-        "elbow_flex": (14.0, 0.1, 14.0, 0.0),
-        "wrist_flex": (5.0, 0.1, 20.0, 0.0),
-        "wrist_yaw": (4.0, 0.1, 10.0, 0.0),
-        "wrist_roll": (4.0, 0.1, 10.0, 0.0),
-        "gripper": (4.0, 0.1, 10.0, 0.0),
+        "shoulder_lift": (13.5, 0.1, 17.0, 0.0),
+        "elbow_flex": (13.5, 0.1, 17.0, 0.0),
+        "wrist_flex": (8.0, 0.1, 15.0, 0.0),
+        "wrist_yaw": (5.0, 0.1, 18.0, 0.0),
+        "wrist_roll": (5.0, 0.1, 10.0, 0.0),
+        "gripper": (5.0, 0.1, 10.0, 0.0),
     }
 
 
@@ -308,7 +310,7 @@ class SeeedB601RTFollowerConfig(RobotConfig):
     motor_vendor: str | None = None
     motor_vendors: dict[str, str] = field(default_factory=dict)
 
-    # Position velocity limits in degrees/s. These are converted to rad/s for rebotarm_control_rt.
+    # Position velocity limits. Damiao uses deg/s; RobStride uses rad/s.
     pos_vel_velocity: float | list[float] = field(default_factory=_dm_pos_vel_velocity)
     # MIT gains used by rebotarm_control_rt in ControlMode.MIT.
     # Tuple order: (kp, kd).
