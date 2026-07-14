@@ -8,6 +8,7 @@ from lerobot.cameras.realsense import RealSenseCameraConfig
 from lerobot.robots.robot import RobotConfig
 
 from .config_serial_gripper import SerialGripperConfig
+from .config_taccap_gripper import TacCapGripperConfig
 
 
 class ActionMode(str, Enum):
@@ -41,6 +42,7 @@ class GripperType(str, Enum):
     """Gripper type for reBot Arm B601."""
     SERIAL = "serial" # Serial gripper.
     REBOTARMB601 = "rebotarm_b601" # reBotArm B601 gripper.
+    TACCAP = "taccap" # Xense TacCap follower gripper.
 
 
 _DEFAULT_PORT = "/dev/ttyACM0"
@@ -282,6 +284,43 @@ class SeeedB601RTFollowerConfig(RobotConfig):
     serial_gripper_init_open: bool = True
     serial_gripper: SerialGripperConfig | None = field(default=None, init=False)
 
+    # Xense TacCap follower gripper parameters.
+    connect_taccap_gripper: bool = True
+    gripper_device: str | None = None
+    taccap_role: str = "follower"
+    taccap_side: str | None = None
+    gripper_wrist_video: str = ""
+    gripper_baudrate: int = 3_000_000
+    gripper_ack_timeout_ms: int = 1000
+    gripper_max_retries: int = 2
+    gripper_open_cameras: bool = False
+    gripper_reload_config_on_connect: bool = True
+    enable_gripper_on_connect: bool = True
+    disable_gripper_on_disconnect: bool = True
+    clear_gripper_fault_on_connect: bool = True
+    gripper_kp: float = 15.0
+    gripper_kd: float = 1.0
+    gripper_feedforward_torque: float = 3.0
+    gripper_torque_grasp_enabled: bool = True
+    print_gripper_torque: bool = True
+    gripper_torque_print_hz: float = 10.0
+    normalize_gripper_action: bool = False
+    gripper_action_min: float = 0.0
+    gripper_action_max: float = 55.0
+    taccap_gripper: TacCapGripperConfig | None = field(default=None, init=False)
+
+    # TacCap tactile and wrist camera auto-discovery.
+    auto_discover_taccap_cameras: bool = True
+    expected_tactiles_per_side: int = 2
+    enable_taccap_tactiles: bool = True
+    tactile_fps: int = 30
+    tactile_output_types: list[str] = field(default_factory=lambda: ["rectify"])
+    tactile_process_backend: bool = True
+    enable_taccap_wrist_camera: bool = True
+    wrist_camera_width: int = 640
+    wrist_camera_height: int = 480
+    wrist_camera_fps: int = 30
+
     # reBotArm B601 gripper force control parameters.
     enabled_gripper_force: bool = True # Whether to enable gripper force control.
     gripper_force_pos_torque_ratio: float = 0.02 # Ratio of gripper force to position torque[0.018 - 1.0]%.
@@ -378,6 +417,38 @@ class SeeedB601RTFollowerConfig(RobotConfig):
             )
         else:
             self.serial_gripper = None
+
+        if self.gripper_type == GripperType.TACCAP:
+            self.taccap_gripper = TacCapGripperConfig(
+                device=self.gripper_device,
+                role=self.taccap_role,
+                side=self.taccap_side,
+                wrist_video=self.gripper_wrist_video,
+                baudrate=self.gripper_baudrate,
+                ack_timeout_ms=self.gripper_ack_timeout_ms,
+                max_retries=self.gripper_max_retries,
+                open_cameras=self.gripper_open_cameras,
+                reload_config_on_connect=self.gripper_reload_config_on_connect,
+                enable_on_connect=self.enable_gripper_on_connect,
+                disable_on_disconnect=self.disable_gripper_on_disconnect,
+                clear_fault_on_connect=self.clear_gripper_fault_on_connect,
+                kp=self.gripper_kp,
+                kd=self.gripper_kd,
+                feedforward_torque=self.gripper_feedforward_torque,
+                torque_grasp_enabled=self.gripper_torque_grasp_enabled,
+                print_torque=self.print_gripper_torque,
+                torque_print_hz=self.gripper_torque_print_hz,
+                normalize_action=self.normalize_gripper_action,
+                action_min=self.gripper_action_min,
+                action_max=self.gripper_action_max,
+            )
+        else:
+            self.taccap_gripper = None
+
+        if self.expected_tactiles_per_side < 0:
+            raise ValueError("expected_tactiles_per_side must be >= 0.")
+        if self.tactile_fps <= 0 or self.wrist_camera_fps <= 0:
+            raise ValueError("TacCap camera FPS values must be positive.")
 
     def _apply_robstride_defaults(self) -> None:
         if self.port == _DEFAULT_PORT:

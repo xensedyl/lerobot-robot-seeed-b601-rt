@@ -8,12 +8,14 @@ from typing import Any
 
 import numpy as np
 
+from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots.robot import Robot
 from lerobot.robots.utils import ensure_safe_goal_position
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
+from . import taccap_follower_discovery as taccap_discovery
 from .config_seeed_b601_rt_follower import GripperType, SeeedB601RTFollowerConfig
 
 
@@ -51,13 +53,26 @@ class SeeedB601RTFollower(Robot):
         self.config = config
         self.arm = None
         self.serial_gripper = None
-        self.cameras = make_cameras_from_configs(config.cameras)
+        self.taccap_gripper = None
         self._uses_serial_gripper = bool(
             config.control_gripper and config.gripper_type == GripperType.SERIAL
         )
         self._uses_builtin_gripper = bool(
             config.control_gripper and config.gripper_type == GripperType.REBOTARMB601
         )
+        self._uses_taccap_gripper = bool(
+            config.control_gripper
+            and config.connect_taccap_gripper
+            and config.gripper_type == GripperType.TACCAP
+        )
+        self._controls_gripper = bool(
+            self._uses_serial_gripper
+            or self._uses_builtin_gripper
+            or self._uses_taccap_gripper
+        )
+        if self._uses_taccap_gripper and config.auto_discover_taccap_cameras:
+            self._add_discovered_taccap_camera_configs()
+        self.cameras = make_cameras_from_configs(config.cameras)
         self.motor_names = [
             name
             for name in config.motor_can_ids
@@ -71,6 +86,54 @@ class SeeedB601RTFollower(Robot):
         self._kinematic_model = None
         self._kinematic_frame_id: int | None = None
         self._validate_config()
+
+    def _add_discovered_taccap_camera_configs(self) -> None:
+        side = taccap_discovery.resolve_gripper_side(
+            self.config.taccap_role,
+            self.config.taccap_side,
+        )
+        camera_configs = dict(self.config.cameras)
+
+        if self.config.enable_taccap_tactiles and self.config.expected_tactiles_per_side > 0:
+            try:
+                from lerobot_camera_xense import XenseTactileCameraConfig
+            except ImportError as e:
+                raise ImportError(
+                    "lerobot_camera_xense is required for automatic TacCap tactile cameras. "
+                    "Install /home/xense/rebot_lerobot/lerobot-camera-xense or disable "
+                    "auto_discover_taccap_cameras."
+                ) from e
+
+            tactiles = taccap_discovery.discover_tactiles_by_hub(self.config.taccap_role)
+            discovered = tactiles.get(side, {})
+            if len(discovered) != self.config.expected_tactiles_per_side:
+                raise ValueError(
+                    f"Expected {self.config.expected_tactiles_per_side} {side} TacCap "
+                    f"tactile sensors, found {len(discovered)}: {sorted(discovered.values())}."
+                )
+            for finger, serial_number in sorted(discovered.items()):
+                camera_configs[f"tactile_{finger}"] = XenseTactileCameraConfig(
+                    serial_number=serial_number,
+                    fps=self.config.tactile_fps,
+                    output_types=list(self.config.tactile_output_types),
+                    process_backend=self.config.tactile_process_backend,
+                )
+
+        if self.config.enable_taccap_wrist_camera:
+            wrist_cameras = taccap_discovery.discover_wrist_cameras(
+                self.config.taccap_role
+            )
+            serial_number = wrist_cameras.get(side)
+            if not serial_number:
+                raise ValueError(f"No {side} follower TacCap wrist camera discovered.")
+            camera_configs["wrist_cam"] = OpenCVCameraConfig(
+                index_or_path=taccap_discovery.resolve_wrist_camera_path(serial_number),
+                width=self.config.wrist_camera_width,
+                height=self.config.wrist_camera_height,
+                fps=self.config.wrist_camera_fps,
+            )
+
+        self.config.cameras = camera_configs
 
     def _validate_config(self) -> None:
         ids = set(self.config.motor_can_ids)
@@ -139,14 +202,14 @@ class SeeedB601RTFollower(Robot):
     @property
     def _action_motors_ft(self) -> dict[str, type]:
         features = {f"{motor}.pos": float for motor in self.motor_names}
-        if self._uses_serial_gripper:
+        if self._uses_serial_gripper or self._uses_taccap_gripper:
             features["gripper.pos"] = float
         return features
 
     @property
     def _action_tcp_ft(self) -> dict[str, type]:
         features = dict.fromkeys(TCP_POSE_KEYS, float)
-        if self.config.control_gripper:
+        if self._controls_gripper:
             features["gripper.pos"] = float
         return features
 
@@ -158,8 +221,16 @@ class SeeedB601RTFollower(Robot):
     @property
     def _observation_motors_ft(self) -> dict[str, type]:
         features: dict[str, type] = {}
-        if self._uses_serial_gripper:
+        if self._uses_serial_gripper or self._uses_taccap_gripper:
             features["gripper.pos"] = float
+        if self._uses_taccap_gripper:
+            if self.config.enable_observation_gripper_vel:
+                features["gripper.vel"] = float
+            if self.config.enable_observation_gripper_torque:
+                features["gripper.torque"] = float
+            features["gripper.target_torque"] = float
+            features["gripper.control_mode"] = int
+            features["gripper.target"] = float
         for motor in self.motor_names:
             obs_key = self._observation_motor_key(motor)
             if motor == "gripper":
@@ -207,9 +278,14 @@ class SeeedB601RTFollower(Robot):
             not self._uses_serial_gripper
             or (self.serial_gripper is not None and self.serial_gripper.is_connected)
         )
+        taccap_gripper_connected = (
+            not self._uses_taccap_gripper
+            or (self.taccap_gripper is not None and self.taccap_gripper.is_connected)
+        )
         return (
             self.arm is not None
             and serial_gripper_connected
+            and taccap_gripper_connected
             and all(cam.is_connected for cam in self.cameras.values())
         )
 
@@ -342,6 +418,10 @@ class SeeedB601RTFollower(Robot):
             # LeRobot/B601 convention: 0=open, 1=closed.
             # SerialGripper convention: 0=closed, 1=open.
             return 1.0 - float(self.serial_gripper.get_gripper_position())
+        if self._uses_taccap_gripper:
+            if self.taccap_gripper is None:
+                return 1.0
+            return float(self.taccap_gripper.observation_position)
         if "gripper" in self._last_positions_deg:
             return self._gripper_pos_to_norm(self._last_positions_deg["gripper"])
         return 1.0
@@ -409,6 +489,8 @@ class SeeedB601RTFollower(Robot):
             joint_action["gripper.pos"] = open_deg + gripper_norm * (closed_deg - open_deg)
         elif self._uses_serial_gripper and "gripper.pos" in action:
             joint_action["gripper.pos"] = max(0.0, min(1.0, float(action["gripper.pos"])))
+        elif self._uses_taccap_gripper and "gripper.pos" in action:
+            joint_action["gripper.pos"] = float(action["gripper.pos"])
 
         return joint_action
 
@@ -480,6 +562,8 @@ class SeeedB601RTFollower(Robot):
         logger.info("Connecting arm on %s with rebotarm_control_rt config %s...", self.config.port, cfg_path)
         arm = RobotArm(str(cfg_path))
         try:
+            if self._uses_taccap_gripper:
+                taccap_discovery.prewarm_tactile_config_cache(self.config.cameras, logger)
             arm.connect()
             self.arm = arm
             if self._uses_serial_gripper:
@@ -492,6 +576,13 @@ class SeeedB601RTFollower(Robot):
                     )
                 self.serial_gripper = SerialGripper(self.config.serial_gripper)
                 self.serial_gripper.connect()
+            if self._uses_taccap_gripper:
+                from .taccap_gripper import TacCapGripper
+
+                if self.config.taccap_gripper is None:
+                    raise ValueError("gripper_type=taccap requires TacCap gripper config.")
+                self.taccap_gripper = TacCapGripper(self.config.taccap_gripper)
+                self.taccap_gripper.connect()
             if not self.cameras:
                 logger.info("No cameras configured; skipping camera connect.")
             else:
@@ -511,6 +602,18 @@ class SeeedB601RTFollower(Robot):
                 except Exception:
                     pass
                 self.serial_gripper = None
+            if self.taccap_gripper is not None:
+                try:
+                    self.taccap_gripper.disconnect()
+                except Exception:
+                    pass
+                self.taccap_gripper = None
+            for camera in self.cameras.values():
+                if camera.is_connected:
+                    try:
+                        camera.disconnect()
+                    except Exception:
+                        pass
             self.arm = None
             raise
 
@@ -662,6 +765,22 @@ class SeeedB601RTFollower(Robot):
         obs_dict: dict[str, Any] = {}
         if self._uses_serial_gripper:
             obs_dict["gripper.pos"] = self._current_gripper_norm()
+        if self._uses_taccap_gripper:
+            if self.taccap_gripper is None:
+                raise DeviceNotConnectedError("TacCap gripper is not connected.")
+            taccap_observation = self.taccap_gripper.read_observation()
+            obs_dict["gripper.pos"] = taccap_observation["gripper.pos"]
+            if self.config.enable_observation_gripper_vel:
+                obs_dict["gripper.vel"] = taccap_observation["gripper.vel"]
+            if self.config.enable_observation_gripper_torque:
+                obs_dict["gripper.torque"] = taccap_observation["gripper.torque"]
+            obs_dict["gripper.target_torque"] = taccap_observation[
+                "gripper.target_torque"
+            ]
+            obs_dict["gripper.control_mode"] = taccap_observation[
+                "gripper.control_mode"
+            ]
+            obs_dict["gripper.target"] = taccap_observation["gripper.target"]
         for motor_name in self.motor_names:
             obs_key = self._observation_motor_key(motor_name)
             if motor_name == "gripper":
@@ -813,12 +932,18 @@ class SeeedB601RTFollower(Robot):
             raise ValueError(f"Cartesian action missing keys: {sorted(missing)}")
 
         tcp_action: RobotAction = {key: float(action[key]) for key in TCP_POSE_KEYS}
-        if self.config.control_gripper:
+        if self._controls_gripper:
             if "gripper.pos" in action:
-                gripper_norm = float(action["gripper.pos"])
+                gripper_action = float(action["gripper.pos"])
+            elif self._uses_taccap_gripper and self.taccap_gripper is not None:
+                gripper_action = self.taccap_gripper.action_position_from_normalized(
+                    self._current_gripper_norm()
+                )
             else:
-                gripper_norm = self._current_gripper_norm()
-            tcp_action["gripper.pos"] = max(0.0, min(1.0, gripper_norm))
+                gripper_action = self._current_gripper_norm()
+            if not self._uses_taccap_gripper:
+                gripper_action = max(0.0, min(1.0, gripper_action))
+            tcp_action["gripper.pos"] = gripper_action
         return tcp_action
 
     def _send_serial_gripper_action(self, action: RobotAction) -> dict[str, float]:
@@ -833,6 +958,13 @@ class SeeedB601RTFollower(Robot):
         self.serial_gripper.set_gripper_position(1.0 - gripper_norm)
         return {"gripper.pos": gripper_norm}
 
+    def _send_taccap_gripper_action(self, action: RobotAction) -> dict[str, float]:
+        if not self._uses_taccap_gripper or "gripper.pos" not in action:
+            return {}
+        if self.taccap_gripper is None:
+            raise DeviceNotConnectedError("TacCap gripper is not connected.")
+        return {"gripper.pos": self.taccap_gripper.send_position(action["gripper.pos"])}
+
     def _send_joint_action(
         self,
         action: RobotAction,
@@ -843,6 +975,7 @@ class SeeedB601RTFollower(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         serial_gripper_action = self._send_serial_gripper_action(action)
+        taccap_gripper_action = self._send_taccap_gripper_action(action)
         goal_pos = self._complete_goal(action, apply_joint_directions=apply_joint_directions)
         for motor_name, position in list(goal_pos.items()):
             goal_pos[motor_name] = self._clip(position, self.config.joint_limits[motor_name])
@@ -859,7 +992,11 @@ class SeeedB601RTFollower(Robot):
         self._set_rt_target_deg(goal_pos)
         self._last_goal_deg = dict(goal_pos)
         self._maybe_log_motion_debug(goal_pos)
-        return {**{f"{motor}.pos": val for motor, val in goal_pos.items()}, **serial_gripper_action}
+        return {
+            **{f"{motor}.pos": val for motor, val in goal_pos.items()},
+            **serial_gripper_action,
+            **taccap_gripper_action,
+        }
 
     def send_action(self, action: RobotAction) -> RobotAction:
         if self.arm is None or not self.is_connected:
@@ -1021,7 +1158,13 @@ class SeeedB601RTFollower(Robot):
                     self.serial_gripper.disconnect()
                 finally:
                     self.serial_gripper = None
+            if self.taccap_gripper is not None:
+                try:
+                    self.taccap_gripper.disconnect()
+                finally:
+                    self.taccap_gripper = None
             for cam in self.cameras.values():
-                cam.disconnect()
+                if cam.is_connected:
+                    cam.disconnect()
 
         logger.info("%s disconnected.", self)

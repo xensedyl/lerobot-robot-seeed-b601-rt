@@ -61,6 +61,47 @@ class BiSeeedB601RTFollowerConfig(RobotConfig):
     right_serial_gripper_init_open: bool = True
     left_serial_gripper: SerialGripperConfig | None = field(default=None, init=False)
     right_serial_gripper: SerialGripperConfig | None = field(default=None, init=False)
+
+    # Xense TacCap follower grippers. Shared values apply to both sides unless
+    # a left/right override is provided.
+    connect_taccap_gripper: bool = True
+    taccap_role: str = "follower"
+    left_taccap_side: str | None = "left"
+    right_taccap_side: str | None = "right"
+    left_gripper_device: str | None = None
+    right_gripper_device: str | None = None
+    gripper_wrist_video: str = ""
+    gripper_baudrate: int = 3_000_000
+    gripper_ack_timeout_ms: int = 1000
+    gripper_max_retries: int = 2
+    gripper_open_cameras: bool = False
+    gripper_reload_config_on_connect: bool = True
+    enable_gripper_on_connect: bool = True
+    disable_gripper_on_disconnect: bool = True
+    clear_gripper_fault_on_connect: bool = True
+    gripper_kp: float = 15.0
+    gripper_kd: float = 1.0
+    gripper_feedforward_torque: float = 3.0
+    left_gripper_feedforward_torque: float | None = None
+    right_gripper_feedforward_torque: float | None = None
+    gripper_torque_grasp_enabled: bool = True
+    print_gripper_torque: bool = True
+    gripper_torque_print_hz: float = 10.0
+    normalize_gripper_action: bool = False
+    gripper_action_min: float = 0.0
+    gripper_action_max: float = 55.0
+
+    auto_discover_taccap_cameras: bool = True
+    expected_tactiles_per_side: int = 2
+    enable_taccap_tactiles: bool = True
+    tactile_fps: int = 30
+    tactile_output_types: list[str] = field(default_factory=lambda: ["rectify"])
+    tactile_process_backend: bool = True
+    enable_taccap_wrist_camera: bool = True
+    wrist_camera_width: int = 640
+    wrist_camera_height: int = 480
+    wrist_camera_fps: int = 30
+
     enabled_gripper_force: bool = True
     gripper_force_pos_torque_ratio: float = 0.02
     enable_observation_joint_pos: bool = False

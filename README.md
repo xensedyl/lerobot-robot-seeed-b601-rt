@@ -13,6 +13,7 @@ in `rebotarm_control_rt`. Current support includes:
 - Damiao / SocketCAN / RobStride adapter selection
 - built-in gripper motor force-position mode
 - external Xense serial gripper
+- Xense TacCap follower gripper with tactile/wrist camera discovery
 - per-arm TCP calibration URDF configuration
 
 ## Install
@@ -305,6 +306,78 @@ When serial gripper mode is enabled, the RT arm motor list does not include the
 CAN gripper motor, but LeRobot action and observation still expose
 `gripper.pos`. Built-in gripper force-position parameters are not used in this
 mode.
+
+## Xense TacCap Gripper
+
+Install the TacCap SDK and the sibling Xense camera plugin in the same Python
+environment before enabling this mode:
+
+```bash
+pip install -e /home/xense/rebot_lerobot/TacCap-Gripper
+pip install -e /home/xense/rebot_lerobot/lerobot-camera-xense
+pip install -e /home/xense/rebot_lerobot/lerobot-robot-seeed-b601-rt
+```
+
+Single-arm RobStride example with automatic follower-side discovery:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=seeed_b601_rt_follower \
+  --robot.port=can0 \
+  --robot.can_adapter=robstride \
+  --robot.control_mode=mit \
+  --robot.control_gripper=true \
+  --robot.gripper_type=taccap \
+  --robot.taccap_role=follower \
+  --robot.taccap_side=left \
+  --teleop.type=rebot_arm_102_leader \
+  --teleop.port=/dev/ttyUSB0 \
+  --display_data=true
+```
+
+By default this discovers the TacCap MCU plus two tactile sensors and one wrist
+camera on the same USB hub. The camera keys are `tactile_left`,
+`tactile_right`, and `wrist_cam`. Disable all camera discovery with:
+
+```bash
+--robot.auto_discover_taccap_cameras=false
+```
+
+Use `--robot.gripper_device=/dev/serial/by-id/...` to pin an MCU path. The
+current `rebot_arm_102_leader` already publishes a normalized `0..1` action, so
+`normalize_gripper_action` defaults to `false`. For an older leader that emits
+a `0..55` angle, set:
+
+```bash
+--robot.normalize_gripper_action=true \
+--robot.gripper_action_min=0 \
+--robot.gripper_action_max=55
+```
+
+TacCap SDK native position uses `0=closed`, `1=open`, so the controller reverses
+it at the hardware boundary. LeRobot action and observation keep the RT package
+convention: `0=open`, `1=closed`. Closing commands can use the reference
+torque-grasp behavior (`kp=0`, `kd=0`, feed-forward torque only). Relevant
+parameters include `gripper_kp`, `gripper_kd`,
+`gripper_feedforward_torque`, and `gripper_torque_grasp_enabled`.
+
+The reference non-RT RobStride follower sends arm joints in MIT mode. To match
+its tracking response, keep `--robot.control_mode=mit` in the RT command. The RT
+default is the more conservative `pos_vel` mode; its default RobStride velocity
+limits are `[1, 0.4, 0.4, 1, 1, 1] rad/s`, so shoulder lift and elbow tracking is
+intentionally much slower.
+
+Dual-arm mode supports one TacCap gripper per side:
+
+```bash
+--robot.type=bi_seeed_b601_rt_follower \
+--robot.left_gripper_type=taccap \
+--robot.right_gripper_type=taccap \
+--robot.left_taccap_side=left \
+--robot.right_taccap_side=right \
+--robot.left_gripper_feedforward_torque=2.0 \
+--robot.right_gripper_feedforward_torque=3.0
+```
 
 ## Cameras
 

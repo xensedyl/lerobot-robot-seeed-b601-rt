@@ -3,7 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from lerobot_robot_seeed_b601_rt import BiSeeedB601RTFollowerConfig, SeeedB601RTFollowerConfig
+from lerobot_robot_seeed_b601_rt import (
+    BiSeeedB601RTFollowerConfig,
+    GripperType,
+    SeeedB601RTFollowerConfig,
+    TacCapGripper,
+    TacCapGripperConfig,
+)
 from lerobot_robot_seeed_b601_rt.bi_seeed_b601_rt_follower import BiSeeedB601RTFollower
 from lerobot_robot_seeed_b601_rt.seeed_b601_rt_follower import SeeedB601RTFollower
 from lerobot.robots.utils import make_robot_from_config
@@ -95,6 +101,23 @@ def test_robstride_adapter_preserves_explicit_overrides():
 
     assert cfg.port == "can1"
     assert cfg.motor_models == {"shoulder_pan": "custom"}
+
+
+def test_robstride_mit_mode_matches_reference_taccap_gains():
+    cfg = SeeedB601RTFollowerConfig(
+        can_adapter="robstride",
+        control_mode="mit",
+        gripper_type=GripperType.TACCAP,
+        auto_discover_taccap_cameras=False,
+        cameras={},
+    )
+    robot = SeeedB601RTFollower(cfg)
+
+    assert cfg.control_mode == "mit"
+    assert robot._mit_gains_lists() == (
+        [50.0, 150.0, 150.0, 50.0, 50.0, 50.0],
+        [3.0, 10.0, 10.0, 5.0, 4.0, 4.0],
+    )
 
 
 def test_joint_action_applies_follower_joint_directions_before_clipping():
@@ -213,6 +236,7 @@ def test_observation_joint_features_are_independently_configurable():
 def test_gripper_observation_is_controlled_separately_from_joint_observation():
     cfg = SeeedB601RTFollowerConfig(
         port="/dev/ttyACM0",
+        gripper_type=GripperType.REBOTARMB601,
         enable_observation_joint_pos=False,
         enable_observation_joint_vel=False,
         enable_observation_joint_torque=False,
@@ -261,8 +285,106 @@ def test_gripper_observation_position_is_normalized():
     assert robot._gripper_pos_to_norm(30.0) == pytest.approx(1.0)
 
 
+def test_taccap_gripper_type_exposes_external_gripper_features():
+    cfg = SeeedB601RTFollowerConfig(
+        gripper_type=GripperType.TACCAP,
+        auto_discover_taccap_cameras=False,
+        enable_observation_gripper_vel=True,
+        enable_observation_gripper_torque=True,
+        cameras={},
+    )
+    robot = SeeedB601RTFollower(cfg)
+
+    assert cfg.taccap_gripper is not None
+    assert len(robot.motor_names) == 6
+    assert "gripper.pos" in robot.action_features
+    assert "gripper.pos" in robot.observation_features
+    assert "gripper.vel" in robot.observation_features
+    assert "gripper.torque" in robot.observation_features
+    assert "gripper.target_torque" in robot.observation_features
+    assert "gripper.control_mode" in robot.observation_features
+    assert "gripper.target" in robot.observation_features
+
+
+def test_taccap_gripper_action_mapping_and_torque_grasp():
+    class FakeMotor:
+        def __init__(self):
+            self.command = None
+
+        def submit_impedance(self, position, kp, kd, torque):
+            self.command = (position, kp, kd, torque)
+
+    class FakeGripper:
+        def __init__(self):
+            self.motor = FakeMotor()
+
+        @staticmethod
+        def pos_to_rad(position):
+            return position * 2.0
+
+    controller = TacCapGripper(
+        TacCapGripperConfig(
+            normalize_action=True,
+            action_min=0.0,
+            action_max=55.0,
+            feedforward_torque=3.0,
+        )
+    )
+    controller.gripper = FakeGripper()
+    controller.last_position = 0.8
+
+    sent_action = controller.send_position(0.0)
+
+    assert sent_action == pytest.approx(44.0)
+    assert controller.last_target == pytest.approx(0.8)
+    assert controller.last_command_mode == "torque_grasp"
+    assert controller.gripper.motor.command == pytest.approx((1.6, 0.0, 0.0, 3.0))
+    assert controller.normalize_action_position(27.5) == pytest.approx(0.5)
+    assert controller.action_position_from_normalized(0.5) == pytest.approx(27.5)
+
+
+def test_taccap_default_mapping_matches_rt_gripper_convention():
+    controller = TacCapGripper(TacCapGripperConfig())
+
+    assert controller.normalize_action_position(0.0) == pytest.approx(1.0)
+    assert controller.normalize_action_position(1.0) == pytest.approx(0.0)
+    assert controller.action_position_from_normalized(1.0) == pytest.approx(0.0)
+    assert controller.action_position_from_normalized(0.0) == pytest.approx(1.0)
+
+    controller.last_position = 0.25
+    assert controller.observation_position == pytest.approx(0.75)
+
+
+def test_dual_taccap_config_passes_side_specific_settings_to_children():
+    cfg = BiSeeedB601RTFollowerConfig(
+        left_gripper_type=GripperType.TACCAP,
+        right_gripper_type=GripperType.TACCAP,
+        auto_discover_taccap_cameras=False,
+        left_gripper_device="/dev/left-taccap",
+        right_gripper_device="/dev/right-taccap",
+        left_gripper_feedforward_torque=2.0,
+        right_gripper_feedforward_torque=3.0,
+        cameras={},
+    )
+    robot = BiSeeedB601RTFollower(cfg)
+
+    assert robot.left.config.taccap_side == "left"
+    assert robot.right.config.taccap_side == "right"
+    assert robot.left.config.gripper_device == "/dev/left-taccap"
+    assert robot.right.config.gripper_device == "/dev/right-taccap"
+    assert robot.left.config.gripper_feedforward_torque == pytest.approx(2.0)
+    assert robot.right.config.gripper_feedforward_torque == pytest.approx(3.0)
+    assert "left_gripper.pos" in robot.action_features
+    assert "right_gripper.pos" in robot.action_features
+
+
 def test_return_to_initial_vlim_supports_dict_scalar_and_list():
-    dict_robot = SeeedB601RTFollower(SeeedB601RTFollowerConfig(port="/dev/ttyACM0"))
+    dict_robot = SeeedB601RTFollower(
+        SeeedB601RTFollowerConfig(
+            port="/dev/ttyACM0",
+            gripper_type=GripperType.REBOTARMB601,
+        )
+    )
     assert dict_robot._return_to_initial_vlim_rad()[0] == pytest.approx(math.radians(15.0))
     assert dict_robot._return_to_initial_vlim_rad()[-1] == pytest.approx(math.radians(150.0))
 

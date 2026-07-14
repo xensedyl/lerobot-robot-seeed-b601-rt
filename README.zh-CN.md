@@ -12,6 +12,7 @@
 - Damiao / SocketCAN / RobStride 适配器选择
 - 内置夹爪电机的 force-position 模式
 - 外置 Xense 串口夹爪
+- Xense TacCap follower 夹爪及视触/腕部相机自动发现
 - 每个机械臂单独配置 TCP 标定 URDF
 
 ## 安装
@@ -295,6 +296,81 @@ SN 是字符串。如果 SN 以 `0` 开头，建议直接写到
 串口夹爪启用后，RT arm 的 motor list 不包含 CAN 夹爪电机，但 LeRobot action 和
 observation 里仍然会有 `gripper.pos`。这种模式下不会使用内置夹爪的 force-position
 参数。
+
+## Xense TacCap 夹爪
+
+使用前，把 TacCap SDK、独立 Xense 相机包和本包安装到同一个 Python 环境：
+
+```bash
+pip install -e /home/xense/rebot_lerobot/TacCap-Gripper
+pip install -e /home/xense/rebot_lerobot/lerobot-camera-xense
+pip install -e /home/xense/rebot_lerobot/lerobot-robot-seeed-b601-rt
+```
+
+单臂 RobStride + TacCap 自动发现示例：
+
+```bash
+lerobot-teleoperate \
+  --robot.type=seeed_b601_rt_follower \
+  --robot.port=can0 \
+  --robot.can_adapter=robstride \
+  --robot.control_mode=mit \
+  --robot.control_gripper=true \
+  --robot.gripper_type=taccap \
+  --robot.taccap_role=follower \
+  --robot.taccap_side=left \
+  --teleop.type=rebot_arm_102_leader \
+  --teleop.port=/dev/ttyUSB0 \
+  --display_data=true
+```
+
+默认会按 follower 角色、左右侧和 USB hub 自动发现 TacCap MCU、两路视触和一路腕部
+相机。相机 observation key 为 `tactile_left`、`tactile_right`、`wrist_cam`。
+如需关闭相机自动发现：
+
+```bash
+--robot.auto_discover_taccap_cameras=false
+```
+
+自动发现 MCU 失败时，可手动指定：
+
+```bash
+--robot.gripper_device=/dev/serial/by-id/...
+```
+
+当前 `rebot_arm_102_leader` 已经输出归一化 `0..1`，因此
+`normalize_gripper_action` 默认是 `false`。如果使用仍然输出 `0..55` 角度的旧版
+leader，使用：
+
+```bash
+--robot.normalize_gripper_action=true \
+--robot.gripper_action_min=0 \
+--robot.gripper_action_max=55
+```
+
+TacCap SDK 原生位置语义是 `0=闭合`、`1=张开`，控制器会在硬件边界做反向转换；
+LeRobot action 和 observation 仍保持 RT 包统一语义：`0=张开`、`1=闭合`。闭合时
+默认启用力矩夹取：位置项使用 `kp=0`、`kd=0`，仅发送
+`gripper_feedforward_torque`。常用参数包括
+`gripper_kp`、`gripper_kd`、`gripper_feedforward_torque` 和
+`gripper_torque_grasp_enabled`。
+
+参考工程的非 RT RobStride follower 对机械臂六个关节使用 MIT 模式。要获得接近的
+跟手响应，RT 命令需要保留 `--robot.control_mode=mit`。RT 默认仍是更保守的
+`pos_vel`；其 RobStride 默认速度上限是 `[1, 0.4, 0.4, 1, 1, 1] rad/s`，其中肩抬和
+肘关节只有 `0.4 rad/s`，因此会明显更慢。
+
+双臂可以分别设置左右 TacCap：
+
+```bash
+--robot.type=bi_seeed_b601_rt_follower \
+--robot.left_gripper_type=taccap \
+--robot.right_gripper_type=taccap \
+--robot.left_taccap_side=left \
+--robot.right_taccap_side=right \
+--robot.left_gripper_feedforward_torque=2.0 \
+--robot.right_gripper_feedforward_torque=3.0
+```
 
 ## 相机
 

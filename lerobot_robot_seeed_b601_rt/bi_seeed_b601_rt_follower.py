@@ -36,6 +36,17 @@ class BiSeeedB601RTFollower(Robot):
         if side not in {"left", "right"}:
             raise ValueError(f"Unknown side {side!r}.")
 
+        side_feedforward_torque = (
+            self.config.left_gripper_feedforward_torque
+            if side == "left"
+            else self.config.right_gripper_feedforward_torque
+        )
+        gripper_feedforward_torque = (
+            self.config.gripper_feedforward_torque
+            if side_feedforward_torque is None
+            else side_feedforward_torque
+        )
+
         return SeeedB601RTFollowerConfig(
             id=self.config.left_id if side == "left" else self.config.right_id,
             calibration_dir=self.calibration_dir,
@@ -109,6 +120,46 @@ class BiSeeedB601RTFollower(Robot):
                 if side == "left"
                 else self.config.right_serial_gripper_init_open
             ),
+            connect_taccap_gripper=self.config.connect_taccap_gripper,
+            gripper_device=(
+                self.config.left_gripper_device
+                if side == "left"
+                else self.config.right_gripper_device
+            ),
+            taccap_role=self.config.taccap_role,
+            taccap_side=(
+                self.config.left_taccap_side
+                if side == "left"
+                else self.config.right_taccap_side
+            ),
+            gripper_wrist_video=self.config.gripper_wrist_video,
+            gripper_baudrate=self.config.gripper_baudrate,
+            gripper_ack_timeout_ms=self.config.gripper_ack_timeout_ms,
+            gripper_max_retries=self.config.gripper_max_retries,
+            gripper_open_cameras=self.config.gripper_open_cameras,
+            gripper_reload_config_on_connect=self.config.gripper_reload_config_on_connect,
+            enable_gripper_on_connect=self.config.enable_gripper_on_connect,
+            disable_gripper_on_disconnect=self.config.disable_gripper_on_disconnect,
+            clear_gripper_fault_on_connect=self.config.clear_gripper_fault_on_connect,
+            gripper_kp=self.config.gripper_kp,
+            gripper_kd=self.config.gripper_kd,
+            gripper_feedforward_torque=gripper_feedforward_torque,
+            gripper_torque_grasp_enabled=self.config.gripper_torque_grasp_enabled,
+            print_gripper_torque=self.config.print_gripper_torque,
+            gripper_torque_print_hz=self.config.gripper_torque_print_hz,
+            normalize_gripper_action=self.config.normalize_gripper_action,
+            gripper_action_min=self.config.gripper_action_min,
+            gripper_action_max=self.config.gripper_action_max,
+            auto_discover_taccap_cameras=self.config.auto_discover_taccap_cameras,
+            expected_tactiles_per_side=self.config.expected_tactiles_per_side,
+            enable_taccap_tactiles=self.config.enable_taccap_tactiles,
+            tactile_fps=self.config.tactile_fps,
+            tactile_output_types=list(self.config.tactile_output_types),
+            tactile_process_backend=self.config.tactile_process_backend,
+            enable_taccap_wrist_camera=self.config.enable_taccap_wrist_camera,
+            wrist_camera_width=self.config.wrist_camera_width,
+            wrist_camera_height=self.config.wrist_camera_height,
+            wrist_camera_fps=self.config.wrist_camera_fps,
             enabled_gripper_force=self.config.enabled_gripper_force,
             gripper_force_pos_torque_ratio=self.config.gripper_force_pos_torque_ratio,
             enable_observation_joint_pos=self.config.enable_observation_joint_pos,
