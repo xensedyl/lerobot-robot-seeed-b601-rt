@@ -15,7 +15,7 @@ from lerobot.robots.robot import Robot
 from lerobot.robots.utils import ensure_safe_goal_position
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
-from . import taccap_gripper as taccap_discovery
+from ..grippers import taccap_gripper as taccap_discovery
 from .config_seeed_b601_rt_follower import GripperType, SeeedB601RTFollowerConfig
 
 
@@ -567,7 +567,7 @@ class SeeedB601RTFollower(Robot):
             arm.connect()
             self.arm = arm
             if self._uses_serial_gripper:
-                from .serial_gripper import SerialGripper
+                from ..grippers.serial_gripper import SerialGripper
 
                 if self.config.serial_gripper is None:
                     raise ValueError(
@@ -577,7 +577,7 @@ class SeeedB601RTFollower(Robot):
                 self.serial_gripper = SerialGripper(self.config.serial_gripper)
                 self.serial_gripper.connect()
             if self._uses_taccap_gripper:
-                from .taccap_gripper import TacCapGripper
+                from ..grippers.taccap_gripper import TacCapGripper
 
                 if self.config.taccap_gripper is None:
                     raise ValueError("gripper_type=taccap requires TacCap gripper config.")

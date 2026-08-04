@@ -25,6 +25,16 @@ The Xense tactile camera implementation remains in the independent
 `lerobot-camera-xense` repository. This package imports it only when automatic
 TacCap tactile cameras are enabled.
 
+## Package layout
+
+```text
+lerobot_robot_seeed_b601_rt/
+├── motorbridge/  # DM, RS, and dual-RS MotorBridge robots
+├── rt/           # single-arm and dual-arm rebotarm_control_rt robots
+├── grippers/     # shared TacCap and serial gripper implementations
+└── __init__.py   # stable public imports and RobotConfig registration
+```
+
 ## Install
 
 Remove the old standalone B601 distribution before installing this consolidated

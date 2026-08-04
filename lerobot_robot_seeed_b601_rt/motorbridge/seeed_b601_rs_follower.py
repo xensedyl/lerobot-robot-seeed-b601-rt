@@ -14,9 +14,9 @@ from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots.utils import ensure_safe_goal_position
 from lerobot.utils.errors import DeviceNotConnectedError
 
-from . import taccap_gripper as taccap
+from ..grippers import taccap_gripper as taccap
+from ..grippers.config_taccap_gripper import TacCapGripperConfig
 from .config_seeed_b601_rs_follower import SeeedB601RSFollowerConfig
-from .config_taccap_gripper import TacCapGripperConfig
 from .seeed_b601_follower import (
     FOLLOWER_GRIPPER_MOTOR,
     LONG_TIMEOUT_SEC,

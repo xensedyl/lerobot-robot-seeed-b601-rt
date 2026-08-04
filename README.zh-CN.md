@@ -23,6 +23,16 @@ Python 包中统一安装和维护。
 Xense 视触相机实现继续放在独立的 `lerobot-camera-xense` 仓库。本包只在启用
 TacCap 自动视触相机时按需导入它，不内置相机代码。
 
+## 包目录
+
+```text
+lerobot_robot_seeed_b601_rt/
+├── motorbridge/  # DM、RS 和双臂 RS MotorBridge Robot
+├── rt/           # rebotarm_control_rt 单臂和双臂 Robot
+├── grippers/     # 共用的 TacCap、Serial 夹爪实现
+└── __init__.py   # 稳定的公开导入和 RobotConfig 注册入口
+```
+
 ## 安装
 
 安装最终仓库前，先卸载旧的独立 B601 发行包。两个包都会注册

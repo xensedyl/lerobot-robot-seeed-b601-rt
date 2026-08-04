@@ -10,8 +10,8 @@ from lerobot_robot_seeed_b601_rt import (
     TacCapGripper,
     TacCapGripperConfig,
 )
-from lerobot_robot_seeed_b601_rt.bi_seeed_b601_rt_follower import BiSeeedB601RTFollower
-from lerobot_robot_seeed_b601_rt.seeed_b601_rt_follower import SeeedB601RTFollower
+from lerobot_robot_seeed_b601_rt.rt.bi_seeed_b601_rt_follower import BiSeeedB601RTFollower
+from lerobot_robot_seeed_b601_rt.rt.seeed_b601_rt_follower import SeeedB601RTFollower
 from lerobot.robots.utils import make_robot_from_config
 
 

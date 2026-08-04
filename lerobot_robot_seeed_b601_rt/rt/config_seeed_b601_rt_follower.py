@@ -7,8 +7,8 @@ from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense import RealSenseCameraConfig
 from lerobot.robots.robot import RobotConfig
 
-from .config_serial_gripper import SerialGripperConfig
-from .config_taccap_gripper import TacCapGripperConfig
+from ..grippers.config_serial_gripper import SerialGripperConfig
+from ..grippers.config_taccap_gripper import TacCapGripperConfig
 
 
 class ActionMode(str, Enum):

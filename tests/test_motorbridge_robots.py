@@ -15,10 +15,10 @@ from lerobot_robot_seeed_b601_rt import (
     SeeedB601RTFollower,
     TacCapGripperFollowerConfig,
 )
-from lerobot_robot_seeed_b601_rt.seeed_b601_follower import (
+from lerobot_robot_seeed_b601_rt.motorbridge.seeed_b601_follower import (
     SeeedB601FollowerBase as MotorbridgeFollowerBase,
 )
-from lerobot_robot_seeed_b601_rt.seeed_b601_rs_follower import (
+from lerobot_robot_seeed_b601_rt.motorbridge.seeed_b601_rs_follower import (
     KINEMATIC_MOTORS,
     TCP_POSE_KEYS,
 )
@@ -109,7 +109,7 @@ class MotorbridgeRobotIntegrationTest(unittest.TestCase):
         robot._startup_sync_last_time_s = 100.0
 
         with patch(
-            "lerobot_robot_seeed_b601_rt.seeed_b601_rs_follower.time.perf_counter",
+            "lerobot_robot_seeed_b601_rt.motorbridge.seeed_b601_rs_follower.time.perf_counter",
             return_value=101.0,
         ):
             limited = robot._apply_startup_action_sync(
@@ -214,7 +214,7 @@ class MotorbridgeRobotIntegrationTest(unittest.TestCase):
         )
 
         with patch(
-            "lerobot_robot_seeed_b601_rt.taccap_gripper.discover_tactiles_by_hub",
+            "lerobot_robot_seeed_b601_rt.grippers.taccap_gripper.discover_tactiles_by_hub",
             return_value={
                 "left": {
                     "left": "GSPS01A00Z0001",
