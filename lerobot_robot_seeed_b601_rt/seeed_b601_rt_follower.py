@@ -15,7 +15,7 @@ from lerobot.robots.robot import Robot
 from lerobot.robots.utils import ensure_safe_goal_position
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
-from . import taccap_follower_discovery as taccap_discovery
+from . import taccap_gripper as taccap_discovery
 from .config_seeed_b601_rt_follower import GripperType, SeeedB601RTFollowerConfig
 
 
