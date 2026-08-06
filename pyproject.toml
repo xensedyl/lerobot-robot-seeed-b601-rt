@@ -20,6 +20,9 @@ classifiers = [
 dependencies = [
   "lerobot>=0.4",
   "rebotarm-control-rt",
+  "motorbridge==0.5.0",
+  # OpenCV 4.12 requires NumPy 2.x, while xensesdk 2.0.1 caps it at 2.2.4.
+  "numpy>=1.26.4,<=2.2.4",
 ]
 
 [tool.setuptools.packages.find]
