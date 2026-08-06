@@ -1,28 +1,205 @@
-# Seeed reBot Arm B601 RT LeRobot Follower
+# Seeed reBot Arm B601 LeRobot Followers
 
-这个包给 LeRobot 注册 Seeed reBot Arm B601 的 RT follower，底层电机控制使用
-`rebotarm_control_rt`。
+这是整理后的 B601 最终仓库。它只安装一个 Python 包
+`lerobot_robot_seeed_b601_rt`，但包内保留两套相互独立的电机控制后端：
 
-相比 `lerobot-robot-seeed-b601`，这个 RT 版本保留 LeRobot 风格的机器人接口，
-但电机命令由 `rebotarm_control_rt` 的 Rust RT 循环发送。当前支持：
+- 原来的 DM/RS Robot 类继续使用 Python `motorbridge`。
+- RT Robot 类继续使用 `rebotarm_control_rt` 的 Rust 实时循环。
 
-- 单臂：`seeed_b601_rt_follower`
-- 双臂：`bi_seeed_b601_rt_follower`
-- 关节控制和笛卡尔 TCP 控制
-- Damiao / SocketCAN / RobStride 适配器选择
-- 内置夹爪电机的 force-position 模式
-- 外置 Xense 串口夹爪
-- Xense TacCap follower 夹爪及视触/腕部相机自动发现
-- 每个机械臂单独配置 TCP 标定 URDF
+motorbridge 类不会继承或调用 RT Robot 类。两套实现只是放在同一个仓库、同一个
+Python 包中统一安装和维护。
+
+## Robot type 与后端
+
+| Robot type | 后端 | Action | 用途 |
+| --- | --- | --- | --- |
+| `seeed_b601_dm_follower` | `motorbridge` | 7D 关节 + 夹爪 | 原 DM follower |
+| `seeed_b601_rs_follower` | `motorbridge` + 可选 FK/IK/TacCap | 6D/7D 关节或 9D TCP | 所有 RS 单臂模式 |
+| `bi_seeed_b601_rs_taccap_gripper_follower` | `motorbridge` + TacCap SDK | 双臂关节 + 可选夹爪 | 双臂 RS + TacCap |
+| `taccap_gripper_follower` | TacCap SDK | 1D 夹爪 | 单独测试 TacCap 夹爪 |
+| `seeed_b601_rt_follower` | `rebotarm_control_rt` | 关节或笛卡尔 | RT 单臂 |
+| `bi_seeed_b601_rt_follower` | `rebotarm_control_rt` | 关节或笛卡尔 | RT 双臂 |
+
+Xense 视触相机实现继续放在独立的 `lerobot-camera-xense` 仓库。本包只在启用
+TacCap 自动视触相机时按需导入它，不内置相机代码。
+
+## 包目录
+
+```text
+lerobot_robot_seeed_b601_rt/
+├── motorbridge/  # DM、RS 和双臂 RS MotorBridge Robot
+├── rt/           # rebotarm_control_rt 单臂和双臂 Robot
+├── grippers/     # 共用的 TacCap、Serial 夹爪实现
+└── __init__.py   # 稳定的公开导入和 RobotConfig 注册入口
+```
 
 ## 安装
 
-先安装 LeRobot 和 `rebotarm_control_rt`，然后安装这个插件：
+安装最终仓库前，先卸载旧的独立 B601 发行包。两个包都会注册
+`seeed_b601_dm_follower` 等同名 type，LeRobot 遇到重复注册会直接报错：
+
+```bash
+pip uninstall -y lerobot_robot_seeed_b601
+```
+
+安装 LeRobot 和 `rebotarm_control_rt` 后，再安装本仓库：
 
 ```bash
 cd /home/xense/rebot_lerobot/lerobot-robot-seeed-b601-rt
 pip install -e .
 ```
+
+按实际硬件安装可选组件：
+
+```bash
+# TacCap 夹爪 SDK
+pip install -e /home/xense/rebot_lerobot/TacCap-Gripper
+
+# 独立 Xense 视触相机包
+pip install -e /home/xense/rebot_lerobot/lerobot-camera-xense
+
+# Xense 外置串口夹爪
+pip install -e /home/xense/rebot_lerobot/XGripper
+```
+
+检查 motorbridge 与 RT 两套继承链是否独立：
+
+```bash
+python - <<'PY'
+from lerobot_robot_seeed_b601_rt import (
+    SeeedB601DMFollower,
+    SeeedB601RTFollower,
+)
+print(SeeedB601DMFollower.__mro__)
+print(SeeedB601RTFollower.__mro__)
+PY
+```
+
+详细的来源提交、文件映射和后端继承关系见 [`MIGRATION.md`](MIGRATION.md)。
+
+## Motorbridge Robot 示例
+
+原 DM Robot 类继续使用 Damiao 串口桥和 `motorbridge`：
+
+```bash
+lerobot-teleoperate \
+  --robot.type=seeed_b601_dm_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=dm_follower \
+  --robot.can_adapter=damiao \
+  --teleop.type=rebot_arm_102_leader \
+  --teleop.port=/dev/ttyUSB0 \
+  --teleop.id=rebot_arm_102_leader \
+  --fps=100 \
+  --display_data=true
+```
+
+原 RS Robot 类继续使用 SocketCAN 和 `motorbridge`：
+
+```bash
+lerobot-teleoperate \
+  --robot.type=seeed_b601_rs_follower \
+  --robot.port=can0 \
+  --robot.id=rs_follower \
+  --robot.can_adapter=socketcan \
+  --teleop.type=rebot_arm_102_leader \
+  --teleop.port=/dev/ttyUSB0 \
+  --teleop.id=rebot_arm_102_leader \
+  --fps=100 \
+  --display_data=true
+```
+
+同一个 type 加下面的参数即可使用无夹爪六轴模式：
+
+```bash
+--robot.gripper_type=none
+```
+
+唯一的 RS 类支持下面四种组合：
+
+| `action_mode` | `gripper_type` | 结果 |
+| --- | --- | --- |
+| `joint` | `motor` | 6 个 RS 关节 + ID7 MotorBridge 夹爪（默认） |
+| `joint` | `none` | 6 个 RS 关节，无夹爪 |
+| `joint` | `taccap` | 6 个 RS 关节 + 外置 TacCap 夹爪 |
+| `cartesian` | `none` | 9D Pico4Head TCP action，无夹爪 |
+
+Pico4Head 使用 motorbridge RS 六轴无夹爪 Robot，FK/IK 由
+`rebotarm_control_rt` 提供：
+
+```bash
+lerobot-teleoperate-pico4 \
+  --robot.type=seeed_b601_rs_follower \
+  --robot.port=can0 \
+  --robot.id=rs_pico_head \
+  --robot.can_adapter=socketcan \
+  --robot.action_mode=cartesian \
+  --robot.gripper_type=none \
+  --teleop.type=pico4head \
+  --teleop.id=pico4head \
+  --fps=60 \
+  --display_data=true
+```
+
+该类型只有六个机械臂关节，没有夹爪，action 固定为：
+
+```text
+tcp.x, tcp.y, tcp.z,
+tcp.r1, tcp.r2, tcp.r3, tcp.r4, tcp.r5, tcp.r6
+```
+
+motorbridge RS + TacCap 单臂：
+
+```bash
+lerobot-teleoperate \
+  --robot.type=seeed_b601_rs_follower \
+  --robot.port=can0 \
+  --robot.id=rs_taccap \
+  --robot.can_adapter=socketcan \
+  --robot.action_mode=joint \
+  --robot.gripper_type=taccap \
+  --robot.connect_taccap_gripper=true \
+  --robot.taccap_role=follower \
+  --robot.taccap_side=left \
+  --teleop.type=rebot_arm_102_leader \
+  --teleop.port=/dev/ttyUSB0 \
+  --teleop.id=rebot_arm_102_leader \
+  --display_data=true
+```
+
+如果不需要自动添加独立 Xense 视触和腕部相机：
+
+```bash
+--robot.auto_discover_taccap_cameras=false
+```
+
+双臂 motorbridge RS + TacCap 使用
+`bi_seeed_b601_rs_taccap_gripper_follower`，分别指定左右 CAN 口和 TacCap：
+
+```bash
+--robot.left_port=can0 \
+--robot.right_port=can1 \
+--robot.left_taccap_side=left \
+--robot.right_taccap_side=right
+```
+
+单独测试 TacCap 夹爪：
+
+```bash
+lerobot-teleoperate \
+  --robot.type=taccap_gripper_follower \
+  --robot.id=taccap_gripper_left \
+  --robot.taccap_role=follower \
+  --robot.taccap_side=left \
+  --teleop.type=rebot_arm_102_leader \
+  --teleop.port=/dev/ttyUSB0 \
+  --teleop.id=rebot_arm_102_leader
+```
+
+注意两套 TacCap Robot 保留各自原有语义：
+
+- `seeed_b601_rs_follower --robot.gripper_type=taccap`：`gripper.pos=0` 闭合，`gripper.pos=1` 张开。
+- `seeed_b601_rt_follower --robot.gripper_type=taccap`：`gripper.pos=0` 张开，`gripper.pos=1` 闭合。
 
 如果你修改过 `rebotarm_control_rt` 的路径解析、URDF 或 native binding，需要先重新
 构建/安装 `rebotarm_control_rt`。
@@ -510,5 +687,6 @@ ps aux | grep python
 ## 标定说明
 
 这个插件不运行 LeRobot calibration 流程。电机零点和电机模式由
-`rebotarm_control_rt` / 固件处理。TCP 标定通过 `rebotarm_control_rt` 生成带新 TCP 的
-URDF，然后通过 `kinematic_urdf_path` 传给本插件使用。
+`rebotarm_control_rt` / 固件处理。笛卡尔模式默认加载安装在
+`rebotarm_control_rt` 包内的 RobStride URDF，本插件不再重复携带该 URDF。
+如需标定 TCP，请生成自定义 URDF，并通过 `kinematic_urdf_path` 传入其路径。

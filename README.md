@@ -1,29 +1,211 @@
-# Seeed reBot Arm B601 RT LeRobot Follower
+# Seeed reBot Arm B601 LeRobot Followers
 
-This package registers RT followers for the Seeed reBot Arm B601 in LeRobot.
-Low-level motor control is handled by `rebotarm_control_rt`.
+This is the consolidated B601 robot repository. It installs one Python package,
+`lerobot_robot_seeed_b601_rt`, containing two independent motor-control backends:
 
-Compared with `lerobot-robot-seeed-b601`, this RT version keeps the
-LeRobot-style robot interface, while motor commands are sent by the Rust RT loop
-in `rebotarm_control_rt`. Current support includes:
+- The original DM/RS robot classes keep using the Python `motorbridge` backend.
+- The RT robot classes use the Rust loop provided by `rebotarm_control_rt`.
 
-- single-arm follower: `seeed_b601_rt_follower`
-- dual-arm follower: `bi_seeed_b601_rt_follower`
-- joint-space control and Cartesian TCP control
-- Damiao / SocketCAN / RobStride adapter selection
-- built-in gripper motor force-position mode
-- external Xense serial gripper
-- Xense TacCap follower gripper with tactile/wrist camera discovery
-- per-arm TCP calibration URDF configuration
+The motorbridge classes do not inherit from or call the RT robot class. They only
+share this repository and Python package so all B601 robot types can be installed
+and maintained together.
+
+## Robot types and backends
+
+| Robot type | Backend | Action space | Purpose |
+| --- | --- | --- | --- |
+| `seeed_b601_dm_follower` | `motorbridge` | 7D joint + gripper | Original Damiao follower |
+| `seeed_b601_rs_follower` | `motorbridge` + optional FK/IK/TacCap | 6D/7D joint or 9D TCP | All single-arm RobStride modes |
+| `bi_seeed_b601_rs_taccap_gripper_follower` | `motorbridge` + TacCap SDK | Dual joint + optional grippers | Dual RS arms with TacCap grippers |
+| `taccap_gripper_follower` | TacCap SDK | 1D gripper | Standalone TacCap gripper test |
+| `seeed_b601_rt_follower` | `rebotarm_control_rt` | Joint or Cartesian | Single RT follower |
+| `bi_seeed_b601_rt_follower` | `rebotarm_control_rt` | Joint or Cartesian | Dual RT follower |
+
+The Xense tactile camera implementation remains in the independent
+`lerobot-camera-xense` repository. This package imports it only when automatic
+TacCap tactile cameras are enabled.
+
+## Package layout
+
+```text
+lerobot_robot_seeed_b601_rt/
+├── motorbridge/  # DM, RS, and dual-RS MotorBridge robots
+├── rt/           # single-arm and dual-arm rebotarm_control_rt robots
+├── grippers/     # shared TacCap and serial gripper implementations
+└── __init__.py   # stable public imports and RobotConfig registration
+```
 
 ## Install
 
-Install LeRobot and `rebotarm_control_rt` first, then install this plugin:
+Remove the old standalone B601 distribution before installing this consolidated
+package. Both packages register names such as `seeed_b601_dm_follower`, and
+LeRobot rejects duplicate registrations:
+
+```bash
+pip uninstall -y lerobot_robot_seeed_b601
+```
+
+Install LeRobot and `rebotarm_control_rt`, then install this repository:
 
 ```bash
 cd /home/xense/rebot_lerobot/lerobot-robot-seeed-b601-rt
 pip install -e .
 ```
+
+Install optional hardware integrations only when needed:
+
+```bash
+# TacCap gripper SDK
+pip install -e /home/xense/rebot_lerobot/TacCap-Gripper
+
+# Independent Xense tactile camera package
+pip install -e /home/xense/rebot_lerobot/lerobot-camera-xense
+
+# External Xense serial gripper
+pip install -e /home/xense/rebot_lerobot/XGripper
+```
+
+Verify the two backends are isolated:
+
+```bash
+python - <<'PY'
+from lerobot_robot_seeed_b601_rt import (
+    SeeedB601DMFollower,
+    SeeedB601RTFollower,
+)
+print(SeeedB601DMFollower.__mro__)
+print(SeeedB601RTFollower.__mro__)
+PY
+```
+
+See [`MIGRATION.md`](MIGRATION.md) for source commits, file mappings, and the
+backend inheritance layout.
+
+## Motorbridge robot examples
+
+The original DM robot continues to use the Damiao serial bridge through
+`motorbridge`:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=seeed_b601_dm_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=dm_follower \
+  --robot.can_adapter=damiao \
+  --teleop.type=rebot_arm_102_leader \
+  --teleop.port=/dev/ttyUSB0 \
+  --teleop.id=rebot_arm_102_leader \
+  --fps=100 \
+  --display_data=true
+```
+
+The original RS robot continues to use SocketCAN through `motorbridge`:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=seeed_b601_rs_follower \
+  --robot.port=can0 \
+  --robot.id=rs_follower \
+  --robot.can_adapter=socketcan \
+  --teleop.type=rebot_arm_102_leader \
+  --teleop.port=/dev/ttyUSB0 \
+  --teleop.id=rebot_arm_102_leader \
+  --fps=100 \
+  --display_data=true
+```
+
+Use the same type without a gripper by adding:
+
+```bash
+--robot.gripper_type=none
+```
+
+The single RS class supports these combinations:
+
+| `action_mode` | `gripper_type` | Result |
+| --- | --- | --- |
+| `joint` | `motor` | 6 RS joints + ID7 motorbridge gripper (default) |
+| `joint` | `none` | 6 RS joints without a gripper |
+| `joint` | `taccap` | 6 RS joints + external TacCap gripper |
+| `cartesian` | `none` | 9-D Pico4Head TCP action; no gripper |
+
+Pico4Head uses the six-axis, gripper-free motorbridge RS robot. Its FK/IK is
+provided by `rebotarm_control_rt`:
+
+```bash
+lerobot-teleoperate-pico4 \
+  --robot.type=seeed_b601_rs_follower \
+  --robot.port=can0 \
+  --robot.id=rs_pico_head \
+  --robot.can_adapter=socketcan \
+  --robot.action_mode=cartesian \
+  --robot.gripper_type=none \
+  --teleop.type=pico4head \
+  --teleop.id=pico4head \
+  --fps=60 \
+  --display_data=true
+```
+
+This robot has six arm joints, no gripper, and the fixed action schema:
+
+```text
+tcp.x, tcp.y, tcp.z,
+tcp.r1, tcp.r2, tcp.r3, tcp.r4, tcp.r5, tcp.r6
+```
+
+Single motorbridge RS arm with a TacCap gripper:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=seeed_b601_rs_follower \
+  --robot.port=can0 \
+  --robot.id=rs_taccap \
+  --robot.can_adapter=socketcan \
+  --robot.action_mode=joint \
+  --robot.gripper_type=taccap \
+  --robot.connect_taccap_gripper=true \
+  --robot.taccap_role=follower \
+  --robot.taccap_side=left \
+  --teleop.type=rebot_arm_102_leader \
+  --teleop.port=/dev/ttyUSB0 \
+  --teleop.id=rebot_arm_102_leader \
+  --display_data=true
+```
+
+Disable automatic use of the independent Xense tactile/wrist camera package with:
+
+```bash
+--robot.auto_discover_taccap_cameras=false
+```
+
+For dual motorbridge RS + TacCap, select
+`bi_seeed_b601_rs_taccap_gripper_follower` and provide the two CAN interfaces and
+TacCap sides:
+
+```bash
+--robot.left_port=can0 \
+--robot.right_port=can1 \
+--robot.left_taccap_side=left \
+--robot.right_taccap_side=right
+```
+
+Standalone TacCap gripper test:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=taccap_gripper_follower \
+  --robot.id=taccap_gripper_left \
+  --robot.taccap_role=follower \
+  --robot.taccap_side=left \
+  --teleop.type=rebot_arm_102_leader \
+  --teleop.port=/dev/ttyUSB0 \
+  --teleop.id=rebot_arm_102_leader
+```
+
+The two TacCap paths retain their original conventions:
+
+- `seeed_b601_rs_follower --robot.gripper_type=taccap`: `gripper.pos=0` is closed and `gripper.pos=1` is open.
+- `seeed_b601_rt_follower --robot.gripper_type=taccap`: `gripper.pos=0` is open and `gripper.pos=1` is closed.
 
 If you changed path resolution, URDFs, or native bindings in
 `rebotarm_control_rt`, rebuild/reinstall `rebotarm_control_rt` first.
@@ -524,6 +706,7 @@ actually exited.
 ## Calibration Notes
 
 This plugin does not run the LeRobot calibration flow. Motor zeroing and motor
-modes are handled by `rebotarm_control_rt` / firmware. TCP calibration is done
-by generating a URDF with the new TCP in `rebotarm_control_rt`, then passing
-that URDF to this plugin through `kinematic_urdf_path`.
+modes are handled by `rebotarm_control_rt` / firmware. By default, Cartesian
+mode loads the RobStride URDF installed inside `rebotarm_control_rt`; this
+plugin no longer ships a duplicate URDF. For a calibrated TCP, generate a
+custom URDF and pass its path through `kinematic_urdf_path`.

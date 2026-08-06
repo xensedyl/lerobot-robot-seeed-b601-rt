@@ -5,7 +5,7 @@ from lerobot.cameras import CameraConfig
 from lerobot.cameras.realsense import RealSenseCameraConfig
 from lerobot.robots.robot import RobotConfig
 
-from .config_serial_gripper import SerialGripperConfig
+from ..grippers.config_serial_gripper import SerialGripperConfig
 from .config_seeed_b601_rt_follower import ActionMode, ControlMode, GripperType
 
 

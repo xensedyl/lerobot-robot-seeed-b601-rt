@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lerobot_robot_seeed_b601_rt"
 dynamic = ["version"]
-description = "Seeed reBot Arm B601 RT follower integration with LeRobot"
+description = "Seeed reBot Arm B601 motorbridge and RT follower integration with LeRobot"
 readme = "README.md"
 authors = [
   { name = "dongyaolin" },
@@ -19,10 +19,22 @@ classifiers = [
 ]
 dependencies = [
   "lerobot>=0.4",
+  "motorbridge>=0.4.4",
+  "python-can>=4.2.0,<5.0.0",
   "rebotarm-control-rt",
   "motorbridge==0.5.0",
   # OpenCV 4.12 requires NumPy 2.x, while xensesdk 2.0.1 caps it at 2.2.4.
   "numpy>=1.26.4,<=2.2.4",
+]
+
+[project.optional-dependencies]
+taccap = [
+  "taccap-gripper>=0.1.5",
+]
+serial-gripper = ["xgripper"]
+all = [
+  "taccap-gripper>=0.1.5",
+  "xgripper",
 ]
 
 [tool.setuptools.packages.find]
